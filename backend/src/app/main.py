@@ -12,6 +12,7 @@ from app.api.frontend import mount_frontend
 from app.config import app_version, database_url, seed_demo_data, static_dir
 from app.db.engine import create_db_engine
 from app.db.migrate import upgrade
+from app.logs import RequestLogMiddleware, configure_logging
 from app.repositories.sql import open_repository
 from app.services import clock
 from app.services.seed import seed_if_empty
@@ -52,6 +53,7 @@ def create_app(
     app = FastAPI(title="Application Tracker API", version=app_version(), lifespan=lifespan)
     app.state.engine = db
     register_error_handlers(app)
+    app.add_middleware(RequestLogMiddleware)
     app.include_router(health.router)
     app.include_router(applications.router, prefix=API_PREFIX)
     app.include_router(followups.router, prefix=API_PREFIX)
@@ -61,4 +63,6 @@ def create_app(
     return app
 
 
+# Before the app is built, so its startup lines (migrations, seed, uvicorn's own) are JSON too.
+configure_logging()
 app = create_app(seed=seed_demo_data(), frontend_dir=static_dir())

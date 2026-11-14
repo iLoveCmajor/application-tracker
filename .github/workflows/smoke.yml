@@ -1,0 +1,61 @@
+# Hourly smoke check of the deployed app (#12): /health, /ready and the funnel endpoint, with retries
+# so a sleeping free-tier instance can wake. A failure opens an issue labelled `alert`, or comments
+# on the open one. The URL is the APP_URL repository variable; a manual run can point elsewhere.
+name: Smoke
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Base URL to check (default the APP_URL repository variable)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: pick the URL
+        id: target
+        env:
+          INPUT_URL: ${{ inputs.url }}
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          url="${INPUT_URL:-$APP_URL}"
+          if [[ -z "$url" ]]; then
+            echo "::notice::No URL to check: set the APP_URL repository variable (Settings > Variables). Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: smoke check
+        id: check
+        if: steps.target.outputs.skip != 'true'
+        env:
+          URL: ${{ steps.target.outputs.url }}
+        run: scripts/smoke.sh "$URL"
+
+      - name: open or update the alert issue
+        if: failure() && steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FAILED_CHECK: ${{ steps.check.outputs.failed }}
+          DETAIL: ${{ steps.check.outputs.detail }}
+          TARGET_URL: ${{ steps.target.outputs.url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: scripts/smoke-alert.sh

@@ -41,4 +41,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
     CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/ready')"
 
 # Migrations (and the demo seed, if SEED_DEMO_DATA is true) run in the app's startup.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \"$PORT\" --log-level \"$LOG_LEVEL\""]
+# The app reads LOG_LEVEL itself and writes JSON lines (app/logs.py), uvicorn's own lines included.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \"$PORT\""]
