@@ -1,8 +1,7 @@
-"""AC-1.7, AC-1.8: openapi.yaml is valid, and the app exposes exactly its operations.
+"""AC-1.7, AC-1.8, AC-5.7: openapi.yaml is valid, and the app exposes exactly its operations.
 
-Operations in openapi.yaml that are not built yet are listed in PENDING. Each
-issue that builds one removes it from the set; from #5 on PENDING is empty and
-the app's operations must equal the file's.
+Until #5 the operations not built yet sat in a PENDING set; it is gone now, so the
+app's operations (method, path, operationId, success status) must equal the file's.
 """
 
 from pathlib import Path
@@ -30,11 +29,6 @@ SPEC_API_OPERATIONS: set[Operation] = {
     ("GET", "/api/v1/stats/funnel"),
 }
 OUTSIDE_PREFIX: set[Operation] = {("GET", "/health"), ("GET", "/ready")}
-
-# In openapi.yaml but not built yet.
-PENDING: set[Operation] = {
-    ("GET", "/api/v1/stats/funnel"),
-}
 
 
 def load_spec() -> dict[str, Any]:
@@ -73,11 +67,7 @@ def test_ac1_7_openapi_yaml_has_every_operation_of_the_spec() -> None:
                 assert schema["additionalProperties"] is False, (method, path)
 
 
-def test_ac1_8_app_matches_openapi_yaml(client: TestClient) -> None:
+def test_ac1_8_ac5_7_app_matches_openapi_yaml(client: TestClient) -> None:
     expected = operations(load_spec())
     actual = operations(client.app.openapi())  # type: ignore[attr-defined]
-
-    still_pending = PENDING & set(actual)
-    assert not still_pending, f"Implemented, so remove from PENDING: {sorted(still_pending)}"
-    assert set(expected) >= PENDING, f"Not in openapi.yaml: {sorted(PENDING - set(expected))}"
-    assert actual == {op: value for op, value in expected.items() if op not in PENDING}
+    assert actual == expected

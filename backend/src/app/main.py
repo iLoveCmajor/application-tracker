@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy import Engine
 
-from app.api import applications, followups, health
+from app.api import applications, followups, health, stats
 from app.api.errors import register_error_handlers
 from app.config import app_version, database_url
 from app.db.engine import create_db_engine
@@ -35,6 +35,7 @@ def create_app(engine: Engine | None = None, *, migrate: bool = True) -> FastAPI
     app.include_router(health.router)
     app.include_router(applications.router, prefix=API_PREFIX)
     app.include_router(followups.router, prefix=API_PREFIX)
+    app.include_router(stats.router, prefix=API_PREFIX)
     return app
 
 

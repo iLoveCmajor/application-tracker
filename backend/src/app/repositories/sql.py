@@ -103,3 +103,7 @@ class SqlRepository:
             .order_by(status_events.c.created_at, status_events.c.id)
         )
         return [_event(row) for row in self._conn.execute(stmt).mappings()]
+
+    def list_all_events(self) -> list[StatusEventRecord]:
+        stmt = select(status_events).order_by(status_events.c.created_at, status_events.c.id)
+        return [_event(row) for row in self._conn.execute(stmt).mappings()]

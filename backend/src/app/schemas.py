@@ -90,6 +90,29 @@ class StatusEvent(ResponseModel):
     created_at: datetime
 
 
+class StatusCounts(BaseModel):
+    saved: int
+    applied: int
+    screen: int
+    interview: int
+    offer: int
+    rejected: int
+    ghosted: int
+
+
+class SourceFunnel(ResponseModel):
+    source: Source
+    applied: int
+    reached_screen: int
+    screen_rate: float | None
+
+
+class Funnel(BaseModel):
+    total: int
+    by_status: StatusCounts
+    by_source: list[SourceFunnel]
+
+
 class Health(BaseModel):
     status: str
     version: str

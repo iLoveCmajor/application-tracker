@@ -38,3 +38,7 @@ class Repository(Protocol):
     def list_events(self, application_id: UUID) -> list[StatusEventRecord]:
         """Oldest first."""
         ...
+
+    def list_all_events(self) -> list[StatusEventRecord]:
+        """Every application's events, oldest first."""
+        ...
