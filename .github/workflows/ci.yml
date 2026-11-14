@@ -1,0 +1,104 @@
+# CI: the same checks as the Makefile (lint, typecheck, test, build) plus the Docker image.
+# Job ids are stable: the deploy workflow (#11) depends on them by name.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON_DOWNLOADS: automatic
+
+jobs:
+  backend:
+    name: backend (lint, mypy, unit + API tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked
+      - name: ruff lint
+        run: uv run ruff check .
+      - name: ruff format check
+        run: uv run ruff format --check .
+      - name: mypy
+        run: uv run mypy
+      - name: unit tests
+        run: uv run pytest -q tests/unit
+      - name: API tests
+        run: uv run pytest -q tests/api
+
+  frontend:
+    name: frontend (typecheck, test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: typecheck
+        run: npm run typecheck
+      - name: tests
+        run: npm test
+      - name: build
+        run: npm run build
+
+  integration:
+    name: integration (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tracker
+          POSTGRES_PASSWORD: tracker
+          POSTGRES_DB: tracker_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tracker -d tracker_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://tracker:tracker@localhost:5432/tracker_test
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked
+      - name: integration tests
+        run: uv run pytest -q tests/integration
+
+  docker:
+    name: docker (image build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: build image
+        run: docker build --tag application-tracker:ci .
