@@ -1,10 +1,12 @@
 """Request and response bodies, matching components/schemas in openapi.yaml."""
 
+import re
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, StringConstraints, field_validator
+from pydantic_core import PydanticCustomError
 
 from app.domain import Source, Status
 
@@ -13,6 +15,21 @@ Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 Link = Annotated[str, StringConstraints(max_length=500, pattern=r"^https?://")]
 Notes = Annotated[str, StringConstraints(max_length=5000)]
 Note = Annotated[str, StringConstraints(max_length=500)]
+
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _iso_date_string(value: Any) -> Any:
+    """Only a "YYYY-MM-DD" string gets through to date parsing (openapi: string, format date).
+
+    Pydantic's lax mode would also take a number (Unix time), a numeric string or a datetime.
+    """
+    if not isinstance(value, str) or not _ISO_DATE.fullmatch(value):
+        raise PydanticCustomError("date_format", "Input should be a date string in YYYY-MM-DD format")
+    return value
+
+
+IsoDate = Annotated[date, BeforeValidator(_iso_date_string)]
 
 
 class RequestModel(BaseModel):
@@ -46,8 +63,8 @@ class ApplicationPatch(RequestModel):
     role: Name | None = None
     source: Source | None = None
     link: Link | None = None
-    applied_date: date | None = None
-    follow_up_date: date | None = None
+    applied_date: IsoDate | None = None
+    follow_up_date: IsoDate | None = None
     notes: Notes | None = None
 
     @field_validator("company", "role", "source")

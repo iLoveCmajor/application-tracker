@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from helpers import API, MISSING_ID, RepoFactory, assert_error, create_application, is_later
+from helpers import API, MISSING_ID, RepoFactory, assert_error, change_status, create_application, is_later
 from sqlalchemy import Engine, func, select
 
 from app.db.tables import status_events
@@ -205,15 +205,10 @@ def test_ac2_5_list_is_newest_updated_first(client: TestClient) -> None:
     assert [x["id"] for x in client.get(APPS).json()] == [a["id"], c["id"], b["id"]]
 
 
-def test_ac2_5_filter_by_status(client: TestClient, repo_factory: RepoFactory) -> None:
+def test_ac2_5_filter_by_status(client: TestClient) -> None:
     saved = create_application(client, company="Saved Co")
     applied = create_application(client, company="Applied Co")
-    # The status endpoint comes in #3; set the status through the repository for now.
-    with repo_factory() as repo, repo.transaction():
-        record = repo.get_application(UUID(applied["id"]))
-        assert record is not None
-        record.status = Status.APPLIED
-        repo.save_application(record)
+    change_status(client, applied["id"], "applied")
 
     res = client.get(APPS, params={"status": "applied"})
     assert res.status_code == 200
@@ -312,6 +307,40 @@ def test_ac2_6_patch_rejects_invalid_values(client: TestClient, field: str, valu
     )
     assert error["details"]["field"] == field
     assert client.get(f"{APPS}/{created['id']}").json() == created
+
+
+@pytest.mark.parametrize("field", ["applied_date", "follow_up_date"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        0,
+        1731456000,
+        1.5,
+        True,
+        "1731456000",
+        "2026-11-10T00:00:00",
+        "2026-11-10T00:00:00Z",
+        "2026-11-10 ",
+        ["2026-11-10"],
+    ],
+)
+def test_ac2_6_patch_dates_accept_only_yyyy_mm_dd(client: TestClient, field: str, value: Any) -> None:
+    created = create_application(client)
+    error = assert_error(
+        client.patch(f"{APPS}/{created['id']}", json={field: value}), 422, "validation_error"
+    )
+    assert error["details"]["field"] == field
+    assert error["message"] == f"{field.replace('_', ' ').capitalize()} must be a date (YYYY-MM-DD)"
+    assert client.get(f"{APPS}/{created['id']}").json() == created
+
+
+def test_ac2_6_patch_dates_accept_yyyy_mm_dd_and_null(client: TestClient) -> None:
+    created = create_application(client)
+    url = f"{APPS}/{created['id']}"
+    body = client.patch(url, json={"applied_date": "2026-02-28", "follow_up_date": "2028-02-29"}).json()
+    assert (body["applied_date"], body["follow_up_date"]) == ("2026-02-28", "2028-02-29")
+    body = client.patch(url, json={"applied_date": None, "follow_up_date": None}).json()
+    assert (body["applied_date"], body["follow_up_date"]) == (None, None)
 
 
 @pytest.mark.parametrize(
