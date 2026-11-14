@@ -95,7 +95,7 @@ browser ──▶ FastAPI ──┬─ /            built React app (static file
 | Suite | Where | What it covers | Count |
 | --- | --- | --- | --- |
 | Unit | `backend/tests/unit` | date rules, follow-up rule, funnel maths, config, log format; no database | 134 |
-| API | `backend/tests/api` | every endpoint through FastAPI's TestClient on SQLite, every acceptance criterion by id, the routes against `openapi.yaml` | 245 |
+| API | `backend/tests/api` | every endpoint through FastAPI's TestClient on SQLite, every acceptance criterion by id, the routes against `openapi.yaml` | 246 |
 | Integration | `backend/tests/integration` | migrations up and down on PostgreSQL, the full flow (create → status changes → history → follow-ups → funnel), cascades, UTC timestamps | 9 |
 | Frontend | `frontend/src/**/*.test.ts` | the typed API client, routing, formatting and overdue helpers (vitest) | 63 |
 
