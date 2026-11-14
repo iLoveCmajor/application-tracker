@@ -9,7 +9,16 @@ DEFAULT_DATABASE_URL = "sqlite:///./tracker.db"
 
 
 def database_url() -> str:
-    return os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL
+    """DATABASE_URL, else DEFAULT_DATABASE_URL.
+
+    Hosts such as Render hand out `postgres://` or `postgresql://` URLs, which SQLAlchemy would
+    open with psycopg2. Both are rewritten to `postgresql+psycopg://`, the driver the app ships.
+    """
+    url = os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url.removeprefix(prefix)
+    return url
 
 
 def app_version() -> str:

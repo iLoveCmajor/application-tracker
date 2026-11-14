@@ -22,6 +22,17 @@ def test_database_url_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch
     assert database_url() == "postgresql+psycopg://tracker@localhost/tracker"
 
 
+@pytest.mark.parametrize("scheme", ["postgres", "postgresql"])
+def test_ac11_1_render_postgres_url_uses_psycopg(monkeypatch: pytest.MonkeyPatch, scheme: str) -> None:
+    monkeypatch.setenv("DATABASE_URL", f"{scheme}://user:pw@dpg-x.frankfurt-postgres.render.com/tracker")
+    assert database_url() == "postgresql+psycopg://user:pw@dpg-x.frankfurt-postgres.render.com/tracker"
+
+
+def test_database_url_keeps_an_explicit_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://tracker@localhost/tracker")
+    assert database_url() == "postgresql+psycopg2://tracker@localhost/tracker"
+
+
 def test_ac1_3_version_prefers_app_version(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_VERSION", "1.2.3")
     monkeypatch.setenv("RENDER_GIT_COMMIT", "abc123")
