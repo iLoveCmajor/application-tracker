@@ -4,6 +4,10 @@ TEST_DATABASE_URL, when set, is used as is; the tests drop and recreate the sche
 point it at a throwaway database (Compose creates `tracker_test` for this). Otherwise a
 PostgreSQL 16 container is started with testcontainers. With neither, the run fails with a
 message: it never skips, so `make test` can't be green without these tests running.
+
+This folder has its own session-scoped `engine`. Pytest caches a session fixture once per
+definition, so reusing the shared one from tests/conftest.py would hand these tests the SQLite
+engine whenever tests/api ran first in the same session (#18).
 """
 
 import os
@@ -12,6 +16,8 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import Engine
 
+from app.db.engine import create_db_engine
+from app.db.migrate import downgrade, upgrade
 from app.db.tables import metadata
 
 POSTGRES_IMAGE = "postgres:16"
@@ -40,6 +46,16 @@ def database_url() -> Iterator[str]:
         yield container.get_connection_url()
     finally:
         container.stop()
+
+
+@pytest.fixture(scope="session")
+def engine(database_url: str) -> Iterator[Engine]:
+    """The PostgreSQL engine, kept apart from the API suite's SQLite one."""
+    engine = create_db_engine(database_url)
+    downgrade(engine)  # reset the schema: TEST_DATABASE_URL may point at a used database
+    upgrade(engine)
+    yield engine
+    engine.dispose()
 
 
 def _clear(engine: Engine) -> None:

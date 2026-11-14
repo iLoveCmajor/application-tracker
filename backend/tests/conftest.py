@@ -2,7 +2,7 @@
 
 Tests run against a real database: a temporary SQLite file, always, so the API
 suite never touches an external database. tests/integration overrides the
-`database_url` fixture with PostgreSQL. The schema is built once per run with the
+`database_url` and `engine` fixtures with its own PostgreSQL ones. The schema is built once per run with the
 Alembic migrations. Test folders that use the database opt in to `empty_tables`
 in their own conftest.py, so unit tests never open one.
 """
@@ -32,7 +32,7 @@ def database_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 @pytest.fixture(scope="session")
 def engine(database_url: str) -> Iterator[Engine]:
     engine = create_db_engine(database_url)
-    downgrade(engine)  # start clean if the database (integration: PostgreSQL) was used before
+    downgrade(engine)  # start clean if the database was used before
     upgrade(engine)
     yield engine
     engine.dispose()
