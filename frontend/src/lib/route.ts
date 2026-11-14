@@ -2,9 +2,10 @@
 //
 //   #/                         applications list (optionally #/?status=applied)
 //   #/new                      create form
+//   #/applications/<id>        detail
 //   #/applications/<id>/edit   edit form
-//   #/followups                follow-ups (#7)
-//   #/funnel                   funnel (#7)
+//   #/followups                follow-ups
+//   #/funnel                   funnel
 //
 // Anything else shows the list.
 
@@ -13,6 +14,7 @@ import { STATUSES, type Status } from '../api'
 export type Route =
   | { name: 'list'; status: Status | null }
   | { name: 'new' }
+  | { name: 'detail'; id: string }
   | { name: 'edit'; id: string }
   | { name: 'followups' }
   | { name: 'funnel' }
@@ -29,6 +31,9 @@ export function parseRoute(hash: string): Route {
   const edit = /^\/applications\/([^/]+)\/edit$/.exec(clean)
   if (edit) return { name: 'edit', id: decodeURIComponent(edit[1]) }
 
+  const detail = /^\/applications\/([^/]+)$/.exec(clean)
+  if (detail) return { name: 'detail', id: decodeURIComponent(detail[1]) }
+
   const status = new URLSearchParams(query).get('status')
   return { name: 'list', status: isStatus(status) ? status : null }
 }
@@ -40,6 +45,7 @@ export function isStatus(value: string | null): value is Status {
 export const href = {
   list: (status?: Status | null) => (status ? `#/?status=${status}` : '#/'),
   new: () => '#/new',
+  detail: (id: string) => `#/applications/${encodeURIComponent(id)}`,
   edit: (id: string) => `#/applications/${encodeURIComponent(id)}/edit`,
   followups: () => '#/followups',
   funnel: () => '#/funnel',

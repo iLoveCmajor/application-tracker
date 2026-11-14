@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type MouseEvent } from 'react'
 import { api, errorMessage, STATUSES, type Application, type Status } from '../api'
 import { PageMessage } from '../components/PageMessage'
 import { StatusBadge } from '../components/StatusBadge'
@@ -76,6 +76,12 @@ export function ApplicationsPage({ status }: { status: Status | null }) {
   )
 }
 
+/** A click anywhere on a row opens the detail, unless it landed on a link or button inside the row. */
+function openRow(e: MouseEvent, id: string) {
+  if ((e.target as HTMLElement).closest('a, button')) return
+  navigate(href.detail(id))
+}
+
 function ApplicationsTable({ items }: { items: Application[] }) {
   return (
     <div className="table-wrap">
@@ -93,14 +99,20 @@ function ApplicationsTable({ items }: { items: Application[] }) {
         </thead>
         <tbody>
           {items.map((app) => (
-            <tr key={app.id}>
+            <tr key={app.id} className="clickable" onClick={(e) => openRow(e, app.id)}>
               <td className="strong">
-                {app.link ? (
-                  <a href={app.link} target="_blank" rel="noreferrer" title="Open the posting">
-                    {app.company}
+                <a href={href.detail(app.id)}>{app.company}</a>
+                {app.link && (
+                  <a
+                    className="posting-link"
+                    href={app.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Open the posting"
+                    aria-label={`Open the posting for ${app.company}`}
+                  >
+                    ↗
                   </a>
-                ) : (
-                  app.company
                 )}
               </td>
               <td>{app.role}</td>

@@ -46,15 +46,15 @@ describe('requests match openapi.yaml', () => {
       { notes: null, follow_up_date: '2026-11-20' },
     ],
     [
-      'changeStatus',
+      'ac7_9 changeStatus',
       (a) => a.changeStatus('a1', { status: 'applied', note: 'Sent' }),
       'POST',
       '/api/v1/applications/a1/status',
       { status: 'applied', note: 'Sent' },
     ],
-    ['listEvents', (a) => a.listEvents('a1'), 'GET', '/api/v1/applications/a1/events', undefined],
-    ['listFollowups', (a) => a.listFollowups(), 'GET', '/api/v1/followups', undefined],
-    ['getFunnel', (a) => a.getFunnel(), 'GET', '/api/v1/stats/funnel', undefined],
+    ['ac7_9 listEvents', (a) => a.listEvents('a1'), 'GET', '/api/v1/applications/a1/events', undefined],
+    ['ac7_9 listFollowups', (a) => a.listFollowups(), 'GET', '/api/v1/followups', undefined],
+    ['ac7_9 getFunnel', (a) => a.getFunnel(), 'GET', '/api/v1/stats/funnel', undefined],
   ]
 
   it.each(cases)('%s', async (_name, call, method, url, body) => {
@@ -116,11 +116,34 @@ describe('responses', () => {
     })
   })
 
-  it('keeps the code of a 409', async () => {
+  it('ac7_4 keeps the code of a 409', async () => {
     stubFetch(json(409, { error: { code: 'invalid_transition', message: 'Already applied', details: {} } }))
     await expect(api.changeStatus('a1', { status: 'applied' })).rejects.toMatchObject({
       status: 409,
       code: 'invalid_transition',
+    })
+  })
+
+  it('ac7_9 returns the events, follow-ups and funnel as sent', async () => {
+    const events = [{ id: 'e1', application_id: 'a1', from_status: null, to_status: 'saved', note: null, created_at: 'x' }]
+    stubFetch(json(200, events))
+    await expect(api.listEvents('a1')).resolves.toEqual(events)
+
+    const followups = [{ id: 'a2', company: 'Bluefin Robotics', follow_up_date: '2026-11-10' }]
+    stubFetch(json(200, followups))
+    await expect(api.listFollowups()).resolves.toEqual(followups)
+
+    const funnel = { total: 0, by_status: { saved: 0 }, by_source: [{ source: 'cold', applied: 0, reached_screen: 0, screen_rate: null }] }
+    stubFetch(json(200, funnel))
+    await expect(api.getFunnel()).resolves.toEqual(funnel)
+  })
+
+  it('ac7_4 keeps the validation message of a status change', async () => {
+    stubFetch(json(422, { error: { code: 'validation_error', message: 'Note must be at most 500 characters', details: { field: 'note' } } }))
+    await expect(api.changeStatus('a1', { status: 'screen', note: 'x'.repeat(501) })).rejects.toMatchObject({
+      status: 422,
+      code: 'validation_error',
+      message: 'Note must be at most 500 characters',
     })
   })
 

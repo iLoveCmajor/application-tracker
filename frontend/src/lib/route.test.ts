@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { href, parseRoute } from './route'
 
-describe('ac6_4 parseRoute', () => {
+describe('ac6_4/ac7_1 parseRoute', () => {
   it.each([
     ['', { name: 'list', status: null }],
     ['#', { name: 'list', status: null }],
@@ -14,7 +14,9 @@ describe('ac6_4 parseRoute', () => {
     ['#/followups', { name: 'followups' }],
     ['#/funnel', { name: 'funnel' }],
     ['#/nowhere', { name: 'list', status: null }],
-    ['#/applications/abc-123', { name: 'list', status: null }],
+    ['#/applications/abc-123', { name: 'detail', id: 'abc-123' }],
+    ['#/applications/abc-123/', { name: 'detail', id: 'abc-123' }],
+    ['#/applications/abc-123/nope', { name: 'list', status: null }],
     ['#/applications//edit', { name: 'list', status: null }],
   ])('%s', (hash, route) => {
     expect(parseRoute(hash)).toEqual(route)
@@ -25,5 +27,6 @@ describe('ac6_4 parseRoute', () => {
     expect(parseRoute(href.list(null))).toEqual({ name: 'list', status: null })
     expect(parseRoute(href.edit('a/b'))).toEqual({ name: 'edit', id: 'a/b' })
     expect(parseRoute(href.new())).toEqual({ name: 'new' })
+    expect(parseRoute(href.detail('a/b'))).toEqual({ name: 'detail', id: 'a/b' })
   })
 })

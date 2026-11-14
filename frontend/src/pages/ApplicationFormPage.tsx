@@ -7,7 +7,7 @@ import { href, navigate } from '../lib/route'
 
 type Load = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; app: Application | null }
 
-/** Create (no `id`) or edit an application. Saving returns to the list. */
+/** Create (no `id`) or edit an application. Creating returns to the list, editing to the application's detail. */
 export function ApplicationFormPage({ id }: { id?: string }) {
   const [load, setLoad] = useState<Load>(id ? { kind: 'loading' } : { kind: 'ready', app: null })
   const [values, setValues] = useState<FormValues>(EMPTY_FORM)
@@ -69,7 +69,7 @@ function ApplicationForm({
       } else {
         await api.createApplication(toInput(values))
       }
-      navigate(href.list())
+      navigate(original ? href.detail(original.id) : href.list())
     } catch (err) {
       const field = err instanceof ApiError && typeof err.details.field === 'string' ? err.details.field : null
       setError({ message: errorMessage(err), field })
@@ -78,13 +78,14 @@ function ApplicationForm({
   }
 
   const invalid = (name: keyof FormValues) => error?.field === name
+  const back = original ? href.detail(original.id) : href.list()
 
   return (
     <section className="page narrow">
       <div className="page-header">
         <div>
-          <a className="back-link" href={href.list()}>
-            ← Applications
+          <a className="back-link" href={back}>
+            ← {original ? original.company : 'Applications'}
           </a>
           <h1>{editing ? `Edit ${original.company}` : 'New application'}</h1>
         </div>
@@ -156,7 +157,7 @@ function ApplicationForm({
         </Field>
 
         <div className="form-actions">
-          <a className="button subtle" href={href.list()}>
+          <a className="button subtle" href={back}>
             Cancel
           </a>
           <button type="submit" className="button primary" disabled={saving}>
