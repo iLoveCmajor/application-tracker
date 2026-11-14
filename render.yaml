@@ -1,0 +1,32 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec): the app from the root Dockerfile plus a
+# free Render Postgres. Auto-deploy is off: the only deploy path is the CI `deploy` job, which calls
+# the service's deploy hook after every CI job on main has passed (#11).
+services:
+  - type: web
+    name: application-tracker
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /ready
+    autoDeployTrigger: "off"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: application-tracker-db
+          property: connectionString
+      - key: SEED_DEMO_DATA
+        value: "true"
+      - key: LOG_LEVEL
+        value: info
+      # PORT is set by Render; the image's CMD listens on it. /health reports RENDER_GIT_COMMIT.
+
+databases:
+  - name: application-tracker-db
+    plan: free
+    region: frankfurt
+    databaseName: tracker
+    user: tracker
+    postgresMajorVersion: "16"
