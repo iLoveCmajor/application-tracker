@@ -146,3 +146,7 @@ def test_ac5_2_screen_rate_rounds_to_3_decimals(screened: int, applied: int, rat
 
 def test_ac5_2_screen_rate_is_none_when_nothing_was_applied() -> None:
     assert screen_rate(0, 0) is None
+
+
+def test_deliberately_broken() -> None:
+    assert 1 + 1 == 3
