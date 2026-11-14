@@ -28,3 +28,12 @@ def assert_error(res: Any, status: int, code: str) -> dict[str, Any]:
 def is_later(a: str, b: str) -> bool:
     """True if timestamp `a` is after `b`."""
     return datetime.fromisoformat(a) > datetime.fromisoformat(b)
+
+
+def create_application(client: Any, **fields: Any) -> dict[str, Any]:
+    """POST a valid invented application, with `fields` overriding the defaults."""
+    body = {"company": "Northwind Analytics", "role": "ML Engineer", "source": "cold"} | fields
+    res = client.post(f"{API}/applications", json=body)
+    assert res.status_code == 201, res.text
+    result: dict[str, Any] = res.json()
+    return result

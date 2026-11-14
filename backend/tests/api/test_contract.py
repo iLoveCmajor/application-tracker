@@ -33,11 +33,6 @@ OUTSIDE_PREFIX: set[Operation] = {("GET", "/health"), ("GET", "/ready")}
 
 # In openapi.yaml but not built yet.
 PENDING: set[Operation] = {
-    ("GET", "/api/v1/applications"),
-    ("POST", "/api/v1/applications"),
-    ("GET", "/api/v1/applications/{id}"),
-    ("PATCH", "/api/v1/applications/{id}"),
-    ("DELETE", "/api/v1/applications/{id}"),
     ("POST", "/api/v1/applications/{id}/status"),
     ("GET", "/api/v1/applications/{id}/events"),
     ("GET", "/api/v1/followups"),

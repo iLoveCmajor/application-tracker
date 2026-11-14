@@ -38,10 +38,16 @@ def _describe(error: dict[str, Any]) -> str:
         return "Request body is not valid JSON"
     if kind == "missing":
         return f"{label} is required"
+    if "input" in error and error["input"] is None:
+        return f"{label} must not be null"
     if kind == "string_too_short":
         return f"{label} must not be empty"
     if kind == "string_too_long":
         return f"{label} must be at most {ctx.get('max_length'):,} characters"
+    if kind == "string_pattern_mismatch" and field == "link":
+        return "Link must start with http:// or https://"
+    if kind == "enum":
+        return f"{label} must be one of: {ctx.get('expected', '')}"
     if kind == "extra_forbidden":
         return f"Unknown field '{field}'"
     if kind.startswith("date"):
