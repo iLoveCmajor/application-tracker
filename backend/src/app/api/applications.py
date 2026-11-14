@@ -1,4 +1,4 @@
-"""/api/v1/applications: create, read, edit, delete and list (FR-1, FR-2)."""
+"""/api/v1/applications: create, read, edit, delete, list, status change and history (FR-1 to FR-6)."""
 
 from uuid import UUID
 
@@ -6,7 +6,7 @@ from fastapi import APIRouter, Response
 from fastapi import status as http
 
 from app import schemas
-from app.api.deps import Repo
+from app.api.deps import Repo, Today
 from app.domain import Status
 from app.services import applications as service
 
@@ -49,3 +49,22 @@ def update_application(id: UUID, body: schemas.ApplicationPatch, repo: Repo) -> 
 )
 def delete_application(id: UUID, repo: Repo) -> None:
     service.delete_application(repo, id)
+
+
+@router.post(
+    "/applications/{id}/status",
+    operation_id="changeApplicationStatus",
+    summary="Change an application's status",
+)
+def change_status(id: UUID, body: schemas.StatusChange, repo: Repo, today: Today) -> schemas.Application:
+    updated = service.change_status(repo, id, body.status, body.note, today)
+    return schemas.Application.model_validate(updated)
+
+
+@router.get(
+    "/applications/{id}/events",
+    operation_id="listApplicationEvents",
+    summary="An application's status history",
+)
+def list_events(id: UUID, repo: Repo) -> list[schemas.StatusEvent]:
+    return [schemas.StatusEvent.model_validate(e) for e in service.list_events(repo, id)]

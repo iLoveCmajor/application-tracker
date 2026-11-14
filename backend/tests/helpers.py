@@ -2,9 +2,10 @@
 
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
+from app.api.deps import get_today
 from app.repositories.sql import SqlRepository
 
 API = "/api/v1"
@@ -35,5 +36,19 @@ def create_application(client: Any, **fields: Any) -> dict[str, Any]:
     body = {"company": "Northwind Analytics", "role": "ML Engineer", "source": "cold"} | fields
     res = client.post(f"{API}/applications", json=body)
     assert res.status_code == 201, res.text
+    result: dict[str, Any] = res.json()
+    return result
+
+
+def set_today(client: Any, today: date) -> None:
+    """Fix "today" for the app behind `client` by overriding the clock dependency."""
+    client.app.dependency_overrides[get_today] = lambda: today
+
+
+def change_status(client: Any, application_id: str, status: str, note: str | None = None) -> dict[str, Any]:
+    """POST a status change that must succeed, and return the application."""
+    body: dict[str, Any] = {"status": status} if note is None else {"status": status, "note": note}
+    res = client.post(f"{API}/applications/{application_id}/status", json=body)
+    assert res.status_code == 200, res.text
     result: dict[str, Any] = res.json()
     return result

@@ -18,6 +18,12 @@ class NotFoundError(AppError):
         super().__init__(404, "not_found", f"{kind} not found", {"id": str(id)})
 
 
+class InvalidTransitionError(AppError):
+    def __init__(self, status: str) -> None:
+        value = str(status)
+        super().__init__(409, "invalid_transition", f"Application is already {value}", {"status": value})
+
+
 class ServiceUnavailableError(AppError):
     def __init__(self, message: str) -> None:
         super().__init__(503, "service_unavailable", message)

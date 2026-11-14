@@ -1,8 +1,13 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 
 def now() -> datetime:
     return datetime.now(UTC)
+
+
+def today() -> date:
+    """The server's current date in UTC ("today" in the spec)."""
+    return now().date()
 
 
 def touch(previous: datetime) -> datetime:

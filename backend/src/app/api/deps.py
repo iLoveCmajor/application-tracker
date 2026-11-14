@@ -1,10 +1,12 @@
 from collections.abc import Iterator
+from datetime import date
 from typing import Annotated
 
 from fastapi import Depends, Request
 
 from app.repositories.base import Repository
 from app.repositories.sql import open_repository
+from app.services import clock
 
 
 def get_repo(request: Request) -> Iterator[Repository]:
@@ -14,3 +16,11 @@ def get_repo(request: Request) -> Iterator[Repository]:
 
 
 Repo = Annotated[Repository, Depends(get_repo)]
+
+
+def get_today() -> date:
+    """The date the business rules see as today. Tests override this dependency to fix it."""
+    return clock.today()
+
+
+Today = Annotated[date, Depends(get_today)]

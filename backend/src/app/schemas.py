@@ -12,6 +12,7 @@ from app.domain import Source, Status
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 Link = Annotated[str, StringConstraints(max_length=500, pattern=r"^https?://")]
 Notes = Annotated[str, StringConstraints(max_length=5000)]
+Note = Annotated[str, StringConstraints(max_length=500)]
 
 
 class RequestModel(BaseModel):
@@ -58,6 +59,11 @@ class ApplicationPatch(RequestModel):
         return value
 
 
+class StatusChange(RequestModel):
+    status: Status
+    note: Note | None = None
+
+
 # ---- responses -----------------------------------------------------------------
 
 
@@ -73,6 +79,15 @@ class Application(ResponseModel):
     notes: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class StatusEvent(ResponseModel):
+    id: UUID
+    application_id: UUID
+    from_status: Status | None
+    to_status: Status
+    note: str | None
+    created_at: datetime
 
 
 class Health(BaseModel):
