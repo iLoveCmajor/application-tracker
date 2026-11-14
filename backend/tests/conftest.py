@@ -1,13 +1,12 @@
 """Shared test setup for tests/api and tests/integration.
 
-Tests run against a real database: a temporary SQLite file by default, or any
-SQLAlchemy URL in TEST_DATABASE_URL (e.g. a throwaway PostgreSQL). The schema is
-built once per run with the Alembic migrations. Test folders that use the
-database opt in to `empty_tables` in their own conftest.py, so unit tests never
-open one.
+Tests run against a real database: a temporary SQLite file, always, so the API
+suite never touches an external database. tests/integration overrides the
+`database_url` fixture with PostgreSQL. The schema is built once per run with the
+Alembic migrations. Test folders that use the database opt in to `empty_tables`
+in their own conftest.py, so unit tests never open one.
 """
 
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,9 +25,6 @@ from app.repositories.sql import SqlRepository
 
 @pytest.fixture(scope="session")
 def database_url(tmp_path_factory: pytest.TempPathFactory) -> str:
-    url = os.environ.get("TEST_DATABASE_URL")
-    if url:
-        return url
     path: Path = tmp_path_factory.mktemp("db") / "test.db"
     return f"sqlite:///{path}"
 
@@ -36,7 +32,7 @@ def database_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 @pytest.fixture(scope="session")
 def engine(database_url: str) -> Iterator[Engine]:
     engine = create_db_engine(database_url)
-    downgrade(engine)  # start clean if TEST_DATABASE_URL points at a used database
+    downgrade(engine)  # start clean if the database (integration: PostgreSQL) was used before
     upgrade(engine)
     yield engine
     engine.dispose()
