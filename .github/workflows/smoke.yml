@@ -1,6 +1,7 @@
 # Hourly smoke check of the deployed app (#12): /health, /ready and the funnel endpoint, with retries
 # so a sleeping free-tier instance can wake. A failure opens an issue labelled `alert`, or comments
 # on the open one. The URL is the APP_URL repository variable; a manual run can point elsewhere.
+# A new alert also starts the on-call responder (responder.yml, #26), hence `actions: write`.
 name: Smoke
 
 on:
@@ -16,6 +17,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: write
 
 concurrency:
   group: smoke

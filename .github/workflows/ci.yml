@@ -96,6 +96,18 @@ jobs:
       - name: integration tests
         run: uv run pytest -q tests/integration
 
+  scripts:
+    name: scripts (responder tests, shellcheck, actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: responder and Smoke script tests
+        run: scripts/responder/tests/run.sh
+      - name: shellcheck
+        run: shellcheck scripts/*.sh scripts/responder/*.sh scripts/responder/tests/run.sh scripts/responder/tests/fake-gh
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+
   docker:
     name: docker (image build)
     runs-on: ubuntu-latest
@@ -108,7 +120,7 @@ jobs:
     name: deploy (Render)
     # Only a push to main deploys, and only after every CI job above has passed (AC-11.3, AC-11.7).
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend, frontend, integration, docker]
+    needs: [backend, frontend, integration, scripts, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:

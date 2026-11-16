@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "category": { "type": "string", "enum": ["code", "infra", "unknown"] },
+    "cause": { "type": "string" },
+    "summary": { "type": "string" },
+    "fix": { "type": "string" },
+    "human_action": { "type": "string" }
+  },
+  "required": ["category", "cause", "summary", "fix", "human_action"],
+  "additionalProperties": false
+}
