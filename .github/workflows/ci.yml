@@ -183,9 +183,9 @@ jobs:
     # can't check this: GITHUB_TOKEN has no scope to read an environment's protection rules.
     environment: production
     # Same group as Rollback (#27), so a prod deploy and a rollback never run at once. Prod always
-    # deploys the SHA of the run that was approved. How GitHub orders a run that waits for approval
-    # against a newer run in this group is not confirmed by its docs; AC-28.7 checks it with two
-    # pushes (see the README). Dev has its own group and isn't affected.
+    # deploys the SHA of the run that was approved. An older run waiting for approval is not cancelled
+    # by a newer push: the newer run's deploy-prod queues behind it until the older one is cancelled or
+    # rejected (see the README). Dev has its own group and isn't affected.
     concurrency:
       group: deploy-render
       cancel-in-progress: false

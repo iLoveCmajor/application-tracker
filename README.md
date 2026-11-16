@@ -376,9 +376,19 @@ push to main -> tests (5 jobs) -> deploy-dev (automatic) -> approval -> deploy-p
 - **Newer pushes:** dev has its own concurrency group, so a commit waiting for approval never blocks the
   dev deploy of newer commits. Prod shares the `deploy-render` group with Rollback, so the two never
   run at once. Prod always deploys the SHA of the run you approve, so check the commit shown on the
-  run before approving. What GitHub does with an older run still waiting for approval when a newer
-  one arrives is not confirmed in its docs; it was not tested yet and gets checked with two pushes
-  after the owner setup (AC-28.7).
+  run before approving.
+- **Two pushes in a row (AC-28.7):** CI runs
+  [43933814430](https://github.com/iLoveCmajor/application-tracker/actions/runs/43933814430) (`875d3e4`)
+  and [43933825399](https://github.com/iLoveCmajor/application-tracker/actions/runs/43933825399)
+  (`1cb08c7`) were pushed to `main` back to back, with no approval in between. Both ran
+  their test jobs and `deploy-dev` to success. The older run's `deploy-prod` was waiting for approval;
+  the newer run's `deploy-prod` showed as pending behind it in the `deploy-render` group (the owner saw
+  this on the Actions page; the API only shows the end state). GitHub did not cancel the older run on
+  its own: its `deploy-prod` kept waiting until the owner cancelled that run, at which point its job
+  and run ended as `cancelled`, and the newer run's `deploy-prod` moved to `waiting` for approval.
+  What that means: approvals queue in order, and a newer push does not replace an older waiting
+  one. When several runs wait, cancel or reject the older ones and approve the newest. Prod only ever
+  deploys the SHA of the run that was approved.
 - Live run: CI run
   [43931665087](https://github.com/iLoveCmajor/application-tracker/actions/runs/43931665087) (the push of
   `b47c764` to `main`). The five test jobs passed. `deploy-dev` deployed to the dev service, and its
