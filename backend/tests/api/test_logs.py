@@ -5,6 +5,7 @@ AC-25.1 to AC-25.3: a failing SQL statement never puts its bound parameters in a
 
 import json
 import logging
+import sys
 import uuid
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -18,6 +19,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.db.engine import create_db_engine
 from app.logs import configure_logging
+from app.telemetry import OtlpLogHandler
 
 REQUEST_FIELDS = {"timestamp", "level", "message", "request_id", "method", "path", "status", "duration_ms"}
 
@@ -274,7 +276,9 @@ def test_ac25_2_error_log_line_does_not_contain_parameters(client: TestClient, i
     failing.post("/test-only/sql-failure")
     entries = info_logs()
     (line,) = [e for e in entries if e["level"] == "ERROR"]
-    assert "no_such_table" in line["exc_info"]  # the traceback is there, with the statement
+    # AC-33.6: the server's text and the statement are not logged; the exception class is.
+    assert "sqlalchemy.exc." in line["exc_info"]
+    assert "no_such_table" not in line["exc_info"]
     assert CANARY not in json.dumps(entries)
 
 
@@ -289,3 +293,104 @@ def test_ac25_3_failing_statement_still_answers_internal_error_with_request_id(
     assert CANARY not in res.text and "no_such_table" not in res.text
     (line,) = [e for e in info_logs() if e["level"] == "ERROR"]
     assert (line["request_id"], line["status"]) == ("abc-sql-500", 500)
+
+
+# ---- AC-33 ----------------------------------------------------------------------
+
+CANARY_33 = "db-detail-canary-33"
+
+
+class FakeDriverError(Exception):
+    """Stands in for a driver error whose message carries an application value."""
+
+    sqlstate = "23514"
+
+
+def raise_db_error() -> None:
+    orig = FakeDriverError(f"DETAIL: Failing row contains ({CANARY_33}, bogus)")
+    raise DBAPIError(f"INSERT INTO applications ... {CANARY_33}", None, orig)
+
+
+def db_error_client(client: TestClient) -> TestClient:
+    app = client.app
+    assert isinstance(app, FastAPI)
+    app.add_api_route("/test-only/db-error", raise_db_error, methods=["POST"])
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def only_error_line(info_logs: ReadLogs) -> dict[str, Any]:
+    entries = info_logs()
+    (line,) = [e for e in entries if e["level"] == "ERROR"]
+    return line
+
+
+def test_ac33_1_error_line_has_no_server_text(client: TestClient, info_logs: ReadLogs) -> None:
+    db_error_client(client).post("/test-only/db-error")
+    text_out = json.dumps(only_error_line(info_logs))
+    assert CANARY_33 not in text_out
+    assert "DETAIL" not in text_out and "Failing row contains" not in text_out
+
+
+def test_ac33_2_exc_info_names_class_and_sqlstate(client: TestClient, info_logs: ReadLogs) -> None:
+    db_error_client(client).post("/test-only/db-error")
+    exc_info = only_error_line(info_logs)["exc_info"]
+    assert "DBAPIError" in exc_info
+    assert "23514" in exc_info
+
+
+def test_ac33_2_sqlite_error_names_the_class(client: TestClient, info_logs: ReadLogs) -> None:
+    sql_failure_client(client).post("/test-only/sql-failure")
+    exc_info = only_error_line(info_logs)["exc_info"]
+    assert "sqlalchemy.exc." in exc_info
+    assert "no_such_table" not in exc_info
+
+
+def test_ac33_3_line_keeps_its_fields_and_the_response_is_500(
+    client: TestClient, info_logs: ReadLogs
+) -> None:
+    res = db_error_client(client).post("/test-only/db-error", headers={"X-Request-ID": "abc-33"})
+    error = assert_error(res, 500, "internal_error")
+    assert error["details"] == {}
+    assert res.headers["X-Request-ID"] == "abc-33"
+    line = only_error_line(info_logs)
+    assert set(line) >= REQUEST_FIELDS
+    assert (line["request_id"], line["method"], line["path"], line["status"]) == (
+        "abc-33",
+        "POST",
+        "/test-only/db-error",
+        500,
+    )
+
+
+def test_ac33_4_other_errors_keep_the_full_traceback(client: TestClient, info_logs: ReadLogs) -> None:
+    boom_client(client).get("/test-only/boom")
+    exc_info = only_error_line(info_logs)["exc_info"]
+    assert "RuntimeError: boom: secret detail" in exc_info
+    assert "Traceback (most recent call last)" in exc_info
+
+
+def test_ac33_4_database_error_logs_exactly_one_error_line(client: TestClient, info_logs: ReadLogs) -> None:
+    db_error_client(client).post("/test-only/db-error")
+    only_error_line(info_logs)  # unpacks exactly one ERROR line
+
+
+def test_ac33_5_otlp_copy_is_redacted() -> None:
+    bodies: list[str] = []
+
+    class FakeLogger:
+        def emit(self, **kwargs: Any) -> None:
+            bodies.append(kwargs["body"])
+
+    class FakeProvider:
+        def get_logger(self, name: str) -> FakeLogger:
+            return FakeLogger()
+
+    handler = OtlpLogHandler(FakeProvider())  # type: ignore[arg-type]
+    try:
+        raise_db_error()
+    except DBAPIError:
+        record = logging.LogRecord("app.request", logging.ERROR, __file__, 1, "failed", None, sys.exc_info())
+    handler.emit(record)
+    (body,) = bodies
+    assert CANARY_33 not in body and "DETAIL" not in body
+    assert "23514" in body and "DBAPIError" in body
