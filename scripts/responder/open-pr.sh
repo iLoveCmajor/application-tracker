@@ -55,15 +55,19 @@ git push --force "$remote" "HEAD:refs/heads/$branch"
 
 tests="$(jq -r '.tests[] | "- `\(.command)`: \(if .passed then "passed" else "failed" end)"' "$out/verdict.json")"
 files="$(jq -r '.changed[] | "- `\(.)`"' "$out/verdict.json")"
+# A test file is anything under backend/tests/ or a frontend .test.ts / .test.tsx (#37).
+test_files="$(jq -r '.changed[] | select(test("^backend/tests/|^frontend/src/.*\\.test\\.tsx?$")) | "`\(.)`"' "$out/verdict.json" | paste -sd, - | sed 's/,/, /g')"
 body_file="$(mktemp)"
 trap 'rm -f "$body_file"' EXIT
 # Text from the model goes in with @ defused, so it can't mention anyone.
-jq -L "$here" -r --arg issue "$issue" --arg run "${RUN_URL:-unknown}" --arg tests "$tests" --arg files "$files" '
+jq -L "$here" -r --arg issue "$issue" --arg run "${RUN_URL:-unknown}" --arg tests "$tests" --arg files "$files" --arg testfiles "$test_files" '
   include "safe";
   "Proposed by the on-call responder for alert #\($issue). Refs #\($issue).\n\n" +
   "**Cause:** \(.cause | safe)\n\n" +
   "**Fix:** \(.fix | safe)\n\n" +
   "**Changed files:**\n\($files)\n\n" +
+  (if $testfiles == "" then "" else
+    "**Test files changed:** \($testfiles). A changed test can make \"tests passed\" meaningless, so read these files first.\n\n" end) +
   "**Tests the responder ran on this change (all passed):**\n\($tests)\n\n" +
   "The integration tests (PostgreSQL) did not run here.\n\n" +
   "**CI did not start automatically**: this pull request was opened with the workflow'"'"'s " +
