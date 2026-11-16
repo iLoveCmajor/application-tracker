@@ -28,6 +28,7 @@ check() { # check <name> <command...>
   shift
   if "$@" >/dev/null 2>&1; then ok "$name"; else fail "$name"; fi
 }
+zw=$(printf '\342\200\213') # the zero-width space safe.jq inserts
 contains() { grep -qF -- "$2" "$1"; }
 lacks() { ! grep -qF -- "$2" "$1"; }
 
@@ -150,12 +151,16 @@ case "$edit" in
   outside) mkdir -p .github/workflows && echo 'on: push' >.github/workflows/evil.yml ;;
   tamper) mkdir -p backend/tests && cp "$scripts/tests/tamper.sh" backend/tests/tamper.sh
     printf 'def total():\n    return 0\n' >backend/src/app/funnel.py ;;
+  tests) printf 'def total():\n    return 0\n' >backend/src/app/funnel.py
+    mkdir -p backend/tests frontend/src && echo 'def test_x(): pass' >backend/tests/test_funnel.py
+    echo 'it("x", () => {})' >frontend/src/funnel.test.tsx && echo 'it("y", () => {})' >frontend/src/funnel.test.ts
+    echo 'export const f = 1' >frontend/src/funnel.ts ;;
   garbage) echo "not json"; exit 1 ;;
   autherror) echo '{"type": "result", "is_error": true, "result": "Invalid API key {see docs}"}'; exit 1 ;;
 esac
 jq -n --arg c "$category" '{type: "result", subtype: "success", is_error: false, total_cost_usd: 0.12,
-  result: "done", structured_output: {category: \$c, cause: "Funnel divides by zero when there are no applications, see @someone. Fixes #5, closes: #6",
-  summary: "The funnel endpoint returns 500.", fix: (if "$edit" == "backend" then "Guard the division in backend/src/app/funnel.py" else "none" end),
+  result: "done", structured_output: {category: \$c, cause: "Funnel divides by zero when there are no applications, see @someone. Fixes #5, closes: #6, Closes GH-7, fixes:#8. The fixture GH-5 stays.",
+  summary: "The funnel endpoint returns 500.", fix: (if "$edit" == "backend" or "$edit" == "tests" then "Guard the division in backend/src/app/funnel.py" else "none" end),
   human_action: "Check the Render dashboard."}}'
 EOF
   chmod +x "$dir/claude"
@@ -185,7 +190,7 @@ scenario() {
   (
     cd "$dir/repo" || exit 1
     CLAUDE_BIN="$dir/claude" ANTHROPIC_API_KEY=sk-ant-test-key "$scripts/run-model.sh" "$dir/out/packet.md" "$dir/out/result.json"
-    TAMPER_OUT="$dir/out" RESPONDER_BACKEND_TESTS="$tests" "$scripts/verify.sh" "$dir/out"
+    TAMPER_OUT="$dir/out" RESPONDER_BACKEND_TESTS="$tests" RESPONDER_FRONTEND_TESTS="$tests" "$scripts/verify.sh" "$dir/out"
     # Something that happens to the out dir after verify and before open-pr (artifact hand-over).
     [[ -n "${POST_VERIFY:-}" ]] && eval "$POST_VERIFY"
   ) >"$dir/log" 2>&1
@@ -211,7 +216,14 @@ check "test_ac26_6_model_text_cannot_mention" bash -c "! grep -q '@someone' $c"
 check "test_ac26_7_change_and_passing_tests_open_pr" bash -c "jq -e '.decision == \"pr\"' $d/out/verdict.json && grep -q 'pr create --base main --head responder/alert-7' $d/gh/calls.log"
 check "test_ac26_7_branch_pushed_with_the_fix" bash -c "git -C $d/origin.git show responder/alert-7:backend/src/app/funnel.py | grep -q 'return 0'"
 check "test_ac26_7_pr_body_refs_alert_tests_and_ci" bash -c "grep -q 'Refs #7' $d/gh/pr-body.md && grep -q '\`true\`: passed' $d/gh/pr-body.md && grep -q 'CI did not start automatically' $d/gh/pr-body.md"
+check "test_ac37_2_no_test_file_no_flag_rest_of_body_unchanged" bash -c "! grep -q 'Test files changed' $d/gh/pr-body.md && grep -q 'Refs #7' $d/gh/pr-body.md && grep -q '\`true\`: passed' $d/gh/pr-body.md && grep -q 'CI did not start automatically' $d/gh/pr-body.md && grep -q '^\*\*Changed files:' $d/gh/pr-body.md"
 check "test_ac26_7_comment_links_pr" contains "$c" "https://github.com/example/tracker/pull/100"
+
+scenario fix-tests code tests true
+d="$tmp/fix-tests"
+check "test_ac37_1_test_files_flagged_in_pr_body" bash -c "grep -q '^\*\*Test files changed:\*\*' $d/gh/pr-body.md && for f in backend/tests/test_funnel.py frontend/src/funnel.test.tsx frontend/src/funnel.test.ts; do grep '^\*\*Test files changed:' $d/gh/pr-body.md | grep -qF \"\\\`\$f\\\`\" || exit 1; done"
+check "test_ac37_1_non_test_file_not_listed_in_flag" bash -c "! grep '^\*\*Test files changed:' $d/gh/pr-body.md | grep -q 'funnel.ts\`\|backend/src'"
+check "test_ac37_3_flag_warns_and_says_read_first" bash -c "grep '^\*\*Test files changed:' $d/gh/pr-body.md | grep -q 'tests passed' && grep '^\*\*Test files changed:' $d/gh/pr-body.md | grep -q 'read these files first'"
 
 scenario fix-fail code backend false
 d="$tmp/fix-fail"
@@ -268,6 +280,17 @@ RUN_URL=x COMMENT_DRY_RUN=1 "$scripts/post-comment.sh" 7 "$tmp/empty" >"$tmp/kw-
 check "test_ac26_6_closing_keywords_defused_in_comment" bash -c "! grep -qiE '(fix(e[sd])?|close[sd]?|resolve[sd]?):? +(#|foo/bar#|https://github.com/)' $tmp/kw-comment.md && grep -q 'see #9' $tmp/kw-comment.md"
 rm -f "$tmp/empty/result.json"
 check "test_ac26_6_closing_keywords_defused_in_pr_body_and_commit" bash -c "! grep -qiE '(fix(e[sd])?|close[sd]?|resolve[sd]?):? +#' $tmp/fix-pass/gh/pr-body.md && ! git -C $tmp/fix-pass/origin.git log -1 --format=%B responder/alert-7 | grep -qiE '(fix(e[sd])?|close[sd]?|resolve[sd]?):? +#'"
+
+# AC-37.4 and AC-37.5: the three newly covered forms, in the comment, the PR body and the commit.
+jq -n '{category: "code", cause: "Closes GH-5, fixes:#6, fixes https://www.github.com/a/b/issues/8 and resolved: https://www.github.com/a/b/issues/9",
+  summary: "Resolved foo/bar#7, Fixes #5, closes: #6, Fix https://github.com/a/b/issues/8. See #9, the fixture GH-5 is wrong, prefix #5", fix: "none", human_action: "x", model: "m"}' >"$tmp/empty/result.json"
+RUN_URL=x COMMENT_DRY_RUN=1 "$scripts/post-comment.sh" 7 "$tmp/empty" >"$tmp/kw2-comment.md" 2>/dev/null
+rm -f "$tmp/empty/result.json"
+closing='(^|[^[:alnum:]])(fix(e[sd])?|close[sd]?|resolve[sd]?)(:[[:space:]]*|[[:space:]]+)(#|GH-[0-9]|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#|https?://(www\.)?github\.com/)'
+check "test_ac37_4_gh_colon_and_www_url_defused_in_comment" bash -c "! grep -qiE '$closing' $tmp/kw2-comment.md && grep -q 'Closes${zw} GH-5' $tmp/kw2-comment.md && grep -q 'fixes${zw}:#6' $tmp/kw2-comment.md"
+check "test_ac37_4_defused_in_pr_body_and_commit_message" bash -c "! grep -qiE '$closing' $tmp/fix-pass/gh/pr-body.md && ! git -C $tmp/fix-pass/origin.git log -1 --format=%B responder/alert-7 | grep -qiE '$closing' && grep -q 'Closes${zw} GH-7' $tmp/fix-pass/gh/pr-body.md && grep -q 'fixes${zw}:#8' $tmp/fix-pass/gh/pr-body.md"
+check "test_ac37_5_old_forms_still_defused" bash -c "! grep -qiE '$closing' $tmp/kw2-comment.md && grep -q 'Fixes${zw} #5' $tmp/kw2-comment.md && grep -q 'closes${zw}: #6' $tmp/kw2-comment.md && grep -q 'Resolved${zw} foo/bar#7' $tmp/kw2-comment.md && grep -q 'Fix${zw} https://github.com' $tmp/kw2-comment.md"
+check "test_ac37_5_non_closing_text_left_alone" bash -c "grep -qF 'See #9, the fixture GH-5 is wrong, prefix #5' $tmp/kw2-comment.md && grep -qF 'The fixture GH-5 stays.' $tmp/fix-pass/gh/pr-body.md"
 
 # --- gate input validation --------------------------------------------------------------------
 echo "gate inputs (AC-26.1)"
