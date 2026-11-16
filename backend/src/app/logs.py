@@ -13,14 +13,17 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import sys
 import time
+import traceback
 import uuid
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
 from opentelemetry import trace
+from sqlalchemy.exc import DBAPIError
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -36,6 +39,46 @@ _EXTRA_FIELDS = ("method", "path", "status", "duration_ms")
 
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 logger = logging.getLogger("app.request")
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    pending: list[BaseException | None] = [exc]
+    while pending:
+        current = pending.pop()
+        if current is None or any(current is seen for seen in chain):
+            continue
+        chain.append(current)
+        pending.extend([current.__context__, current.__cause__])
+    return chain
+
+
+def _is_database_error(exc: BaseException) -> bool:
+    if isinstance(exc, DBAPIError | sqlite3.Error):
+        return True
+    driver = type(exc).__module__.split(".")[0] in {"psycopg", "psycopg2", "asyncpg"}
+    return driver and hasattr(exc, "sqlstate")
+
+
+def _sqlstate(exc: BaseException) -> str | None:
+    wrapped = exc.orig if isinstance(exc, DBAPIError) else exc
+    code = getattr(wrapped, "sqlstate", None) or getattr(wrapped, "pgcode", None)
+    return code if isinstance(code, str) else None
+
+
+def format_exception_redacted(exc: BaseException, tb: Any) -> str:
+    """The stack frames, then each exception's class and, for a database error, its SQLSTATE.
+
+    A database server's message can hold application values (PostgreSQL's `DETAIL: Failing row
+    contains (...)`, a rejected enum value, `CONTEXT`), so no message text is written: the rule is
+    class and SQLSTATE, not a text filter (#33).
+    """
+    lines = ["Traceback (most recent call last):\n", *traceback.format_tb(tb)]
+    for item in _exception_chain(exc):
+        name = f"{type(item).__module__}.{type(item).__qualname__}"
+        state = _sqlstate(item) if _is_database_error(item) else None
+        lines.append(f"{name} (SQLSTATE {state})\n" if state else f"{name}\n")
+    return "".join(lines).rstrip("\n")
 
 
 class JsonFormatter(logging.Formatter):
@@ -55,7 +98,11 @@ class JsonFormatter(logging.Formatter):
             if field in record.__dict__:
                 entry[field] = record.__dict__[field]
         if record.exc_info:
-            entry["exc_info"] = self.formatException(record.exc_info)
+            exc = record.exc_info[1]
+            if exc is not None and any(_is_database_error(item) for item in _exception_chain(exc)):
+                entry["exc_info"] = format_exception_redacted(exc, record.exc_info[2])
+            else:
+                entry["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(entry, default=str)
 
 
