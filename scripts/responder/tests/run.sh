@@ -137,6 +137,16 @@ echo 22 >"$FAKE_GH_DIR/open-alert"
   "$root/scripts/smoke-alert.sh") >/dev/null 2>&1
 check "test_ac26_1_repeat_failure_comments_without_dispatch" bash -c "grep -q 'issue comment 22' $FAKE_GH_DIR/calls.log && ! grep -q 'workflow run' $FAKE_GH_DIR/calls.log"
 
+# What the stub model writes for the odd-paths scenario (#53): paths with a backtick, @name, a closing
+# keyword. Quoted heredoc, so nothing in it is expanded.
+cat >"$tmp/oddpaths.sh" <<'ODD'
+printf 'def total():\n    return 0\n' >backend/src/app/funnel.py
+mkdir -p frontend/src/api backend/tests
+echo 'export const t = 1' >frontend/src/api/types.ts
+echo 'x = 1' >'backend/src/a`@octocat Closes #5.py'
+echo 'x = 4' >'backend/tests/t`@octocat fixes #6.py'
+ODD
+
 # --- a scenario: fake repo, stub model, verify, open-pr, post-comment -------------------------
 # stub <dir> <category> <edit: none|backend|outside|garbage>
 make_stub() {
@@ -155,6 +165,7 @@ case "$edit" in
     mkdir -p backend/tests frontend/src && echo 'def test_x(): pass' >backend/tests/test_funnel.py
     echo 'it("x", () => {})' >frontend/src/funnel.test.tsx && echo 'it("y", () => {})' >frontend/src/funnel.test.ts
     echo 'export const f = 1' >frontend/src/funnel.ts ;;
+  oddpaths) bash "$tmp/oddpaths.sh" ;;
   garbage) echo "not json"; exit 1 ;;
   autherror) echo '{"type": "result", "is_error": true, "result": "Invalid API key {see docs}"}'; exit 1 ;;
 esac
@@ -224,6 +235,32 @@ d="$tmp/fix-tests"
 check "test_ac37_1_test_files_flagged_in_pr_body" bash -c "grep -q '^\*\*Test files changed:\*\*' $d/gh/pr-body.md && for f in backend/tests/test_funnel.py frontend/src/funnel.test.tsx frontend/src/funnel.test.ts; do grep '^\*\*Test files changed:' $d/gh/pr-body.md | grep -qF \"\\\`\$f\\\`\" || exit 1; done"
 check "test_ac37_1_non_test_file_not_listed_in_flag" bash -c "! grep '^\*\*Test files changed:' $d/gh/pr-body.md | grep -q 'funnel.ts\`\|backend/src'"
 check "test_ac37_3_flag_warns_and_says_read_first" bash -c "grep '^\*\*Test files changed:' $d/gh/pr-body.md | grep -q 'tests passed' && grep '^\*\*Test files changed:' $d/gh/pr-body.md | grep -q 'read these files first'"
+
+echo "changed-file list is safe (AC-53)"
+scenario odd-paths code oddpaths true
+d="$tmp/odd-paths"
+b="$d/gh/pr-body.md"
+section="$tmp/odd-section.md"
+sed -n '/^\*\*Changed files:/,/^$/p' "$b" >"$section" 2>/dev/null
+check "test_ac53_0_odd_paths_made_it_to_a_pr" bash -c "jq -e '.decision == \"pr\"' $d/out/verdict.json && [ -s $section ]"
+check "test_ac53_1_no_active_mention_or_closing_keyword_in_changed_files" bash -c "! grep -qE '@[A-Za-z]' $section && ! grep -qiE '(fix(e[sd])?|close[sd]?|resolve[sd]?):?[[:space:]]*#' $section && grep -qF 'Closes${zw} #5' $section && grep -qF '@${zw}octocat' $section"
+check "test_ac53_1_no_active_mention_in_test_files_flag" bash -c "! grep '^\*\*Test files changed:' $b | grep -qE '@[A-Za-z]' && ! grep '^\*\*Test files changed:' $b | grep -qiE 'fix(e[sd])?:?[[:space:]]+#' && grep '^\*\*Test files changed:' $b | grep -qF 'fixes${zw} #6'"
+# A backtick can't end the span: every list item has exactly the opening and the closing backtick.
+check "test_ac53_2_each_path_is_one_list_item_with_one_code_span" bash -c "
+  [ \"\$(grep -c '^- ' $section)\" -eq 4 ] || exit 1
+  [ \"\$(grep '^- ' $section | awk -F'\`' 'NF != 3 || \$1 != \"- \" || \$3 != \"\"' | grep -c .)\" -eq 0 ] || exit 1
+  [ \"\$(sed '1d;\$d' $section | grep -v '^- ' | grep -c .)\" -eq 0 ]"
+# A newline or CR in a path can't start a new line (git quotes such names, so verify.sh stops them
+# first; safe_path is the second wall).
+nl_in='["backend/src/b\nCloses #5\n- @octocat.py", "backend/src/c\rCloses\r#6.py", "backend/src/d`e.py"]'
+nl_out="$(echo "$nl_in" | jq -L "$scripts" -r 'include "safe"; .[] | "- `\(. | safe_path)`"')"
+check "test_ac53_2_newline_and_cr_in_a_path_stay_on_one_line" bash -c "[ \"\$(grep -c . <<<'$nl_out')\" -eq 3 ] && ! grep -q '^Closes\|^- @' <<<'$nl_out'"
+check "test_ac53_1_closing_keyword_hidden_by_a_cr_is_still_defused" bash -c "! grep -qiE 'closes[[:space:]]+#' <<<'$nl_out'"
+check "test_ac53_3_ordinary_paths_unchanged" bash -c "grep -qxF -- '- \`backend/src/app/funnel.py\`' $section && grep -qxF -- '- \`frontend/src/api/types.ts\`' $section"
+ord_out="$(echo '["backend/src/app/funnel.py", "frontend/src/api/types.ts", "backend/src/my-mod_v2.py", "frontend/src/a.b.test.tsx"]' | jq -L "$scripts" -r 'include "safe"; .[] | "- `\(. | safe_path)`"')"
+check "test_ac53_3_dash_underscore_dot_paths_unchanged" bash -c "[ '$ord_out' == \"\$(printf '%s\n' '- \`backend/src/app/funnel.py\`' '- \`frontend/src/api/types.ts\`' '- \`backend/src/my-mod_v2.py\`' '- \`frontend/src/a.b.test.tsx\`')\" ]"
+check "test_ac53_4_rest_of_body_unchanged" bash -c "grep -q 'Refs #7' $b && grep -q '^\*\*Cause:' $b && grep -q '^\*\*Fix:' $b && grep -q '\`true\`: passed' $b && grep -q 'CI did not start automatically' $b && grep -q 'The integration tests (PostgreSQL) did not run here' $b"
+check "test_ac53_4_verdict_keeps_the_real_paths" bash -c "jq -e '.changed | index(\"backend/src/a\`@octocat Closes #5.py\")' $d/out/verdict.json"
 
 scenario fix-fail code backend false
 d="$tmp/fix-fail"
