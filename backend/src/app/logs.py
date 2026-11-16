@@ -4,6 +4,9 @@ Every log line is one JSON object on stdout. Each HTTP request logs one line wit
 (no query string), status, duration and request id. The id comes from the `X-Request-ID` header,
 or is generated, and is returned in that header. Request bodies and application fields are never
 logged: the request line is built from the method, the path and the status only.
+
+When a span is current (telemetry on, #29), every line also carries its `trace_id` and `span_id`, so
+a log line can be matched to its trace. With telemetry off there is no span and the fields are absent.
 """
 
 import json
@@ -17,6 +20,7 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+from opentelemetry import trace
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -43,6 +47,10 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
             "request_id": request_id_var.get(),
         }
+        span_context = trace.get_current_span().get_span_context()
+        if span_context.is_valid:
+            entry["trace_id"] = trace.format_trace_id(span_context.trace_id)
+            entry["span_id"] = trace.format_span_id(span_context.span_id)
         for field in _EXTRA_FIELDS:
             if field in record.__dict__:
                 entry[field] = record.__dict__[field]

@@ -1,0 +1,53 @@
+# Grafana data sources for the `observability` Compose profile (#29), linked so one request can be
+# followed across signals: a metric's exemplar opens its trace, a trace opens its log lines, and a log
+# line's trace_id opens the trace.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 5s
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+          urlDisplayLabel: View trace
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+        customQuery: true
+        query: '{service_name="application-tracker"} | trace_id="$${__span.traceId}"'
+      tracesToMetrics:
+        datasourceUid: prometheus
+      lokiSearch:
+        datasourceUid: loki
+      nodeGraph:
+        enabled: false
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        # The JSON line carries the trace id; the link opens that trace in Tempo.
+        - name: trace_id
+          matcherType: regex
+          matcherRegex: '"trace_id": "([0-9a-f]{32})"'
+          datasourceUid: tempo
+          url: '$${__value.raw}'
+          urlDisplayLabel: View trace

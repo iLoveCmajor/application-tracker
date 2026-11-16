@@ -1,0 +1,13 @@
+# Prometheus for the `observability` Compose profile (#29). Nothing is scraped: the collector pushes
+# the app's metrics to the OTLP receiver (--web.enable-otlp-receiver), exemplars (trace ids) included.
+global:
+  evaluation_interval: 15s
+
+otlp:
+  # service.name arrives as the `job` label; keep the version as a label too.
+  promote_resource_attributes:
+    - service.version
+
+storage:
+  tsdb:
+    out_of_order_time_window: 30m

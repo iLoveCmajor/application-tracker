@@ -1,5 +1,10 @@
 # The whole system: `docker compose up --build`, then http://localhost:8080.
 # `docker compose down` keeps the data; `docker compose down -v` deletes it.
+#
+# With telemetry (#29): `docker compose --profile observability up --build` also starts an
+# OpenTelemetry Collector, Prometheus, Tempo, Loki and Grafana (http://localhost:3000). The
+# observability services exist only under that profile; plain `docker compose up` starts db and app.
+# Stop it with `docker compose --profile observability down`.
 services:
   db:
     image: postgres:16
@@ -28,12 +33,91 @@ services:
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       APP_VERSION: ${APP_VERSION:-dev}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-5000}
+    # Telemetry is on only when OTEL_EXPORTER_OTLP_ENDPOINT is set. Under the observability profile
+    # the collector starts first and its name resolves, so the app exports to it; without the
+    # profile the name doesn't resolve, the variable stays empty and nothing is exported.
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$OTEL_EXPORTER_OTLP_ENDPOINT" ] && getent hosts otel-collector > /dev/null 2>&1; then
+          export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+        fi
+        exec uvicorn app.main:app --host 0.0.0.0 --port "$$PORT"
     ports:
       - "${APP_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
+        required: false # only under the observability profile
     restart: unless-stopped
+
+  # ---- observability profile (#29) ------------------------------------------------
+  otel-collector:
+    profiles: [observability]
+    image: otel/opentelemetry-collector:0.165.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./docker/observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on: [tempo, prometheus, loki]
+
+  prometheus:
+    profiles: [observability]
+    image: prom/prometheus:v3.16.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --web.enable-otlp-receiver
+      - --enable-feature=exemplar-storage
+      - --storage.tsdb.retention.time=1d
+    volumes:
+      - ./docker/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
+  tempo:
+    profiles: [observability]
+    image: grafana/tempo:2.10.10
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./docker/observability/tempo.yaml:/etc/tempo.yaml:ro
+    tmpfs:
+      - /var/tempo:mode=1777
+    ports:
+      - "127.0.0.1:${TEMPO_PORT:-3200}:3200"
+
+  loki:
+    profiles: [observability]
+    image: grafana/loki:3.7.10
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./docker/observability/loki.yaml:/etc/loki/loki.yaml:ro
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+
+  grafana:
+    profiles: [observability]
+    image: grafana/grafana:12.4.15
+    environment:
+      # Local only (bound to 127.0.0.1): no login, anonymous admin.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/application-tracker.json
+    volumes:
+      - ./docker/observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./docker/observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on: [prometheus, tempo, loki]
 
 volumes:
   db-data:
