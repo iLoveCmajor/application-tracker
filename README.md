@@ -346,9 +346,11 @@ push to main -> tests (5 jobs) -> deploy-dev (automatic) -> approval -> deploy-p
 - **Approve:** open the run on the Actions tab, click **Review deployments**, tick `production`,
   **Approve and deploy** (or **Reject**). Prod then deploys the SHA of that run.
 - **Newer pushes:** dev has its own concurrency group, so a commit waiting for approval never blocks the
-  dev deploy of newer commits. Prod shares the `deploy-render` group with Rollback: when a newer
-  commit reaches `deploy-prod`, GitHub cancels the older run that is still waiting, so only the newest
-  commit is offered for approval.
+  dev deploy of newer commits. Prod shares the `deploy-render` group with Rollback, so the two never
+  run at once. Prod always deploys the SHA of the run you approve, so check the commit shown on the
+  run before approving. What GitHub does with an older run still waiting for approval when a newer
+  one arrives is not confirmed in its docs; it was not tested yet and gets checked with two pushes
+  after the owner setup (AC-28.7).
 - Rollback ([below](#rollback)) and Smoke target prod only (`APP_URL`, `RENDER_DEPLOY_HOOK_URL`); they
   never read the dev settings.
 
