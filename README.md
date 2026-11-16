@@ -455,7 +455,7 @@ dropped or renamed something the old code needs, fix forward instead.
 
 ## Known follow-ups
 
-Two issues are open and known, not hidden:
+These are open and known, not hidden:
 
 - [#33](https://github.com/iLoveCmajor/application-tracker/issues/33): on a database constraint
   violation PostgreSQL's own `DETAIL` text can carry application fields into the error log line.
@@ -463,6 +463,12 @@ Two issues are open and known, not hidden:
 - [#37](https://github.com/iLoveCmajor/application-tracker/issues/37): the responder's pull request
   should flag changed test files for the reviewer, and its `Read` deny rules were never checked
   against the live CLI.
+- **The free Render database expires on 2026-12-16.** The date comes from the Render dashboard, as
+  recorded in [#46](https://github.com/iLoveCmajor/application-tracker/issues/46); it is not in
+  `render.yaml`, which only says `plan: free`. It fits the 30-day rule under Free tier limits. After
+  that date the live app and the Smoke workflow fail until the database is replaced: create a new
+  database from the Blueprint, set `DATABASE_URL` on the service to its connection string, and
+  redeploy.
 
 ## How it was built
 
