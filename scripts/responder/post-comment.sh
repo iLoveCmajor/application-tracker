@@ -18,10 +18,11 @@ if [[ ! "$issue" =~ ^[0-9]+$ || -z "$out" ]]; then
   echo "usage: $0 <issue-number> <out-dir>" >&2
   exit 2
 fi
+here="$(cd "$(dirname "$0")" && pwd)"
 run_url="${RUN_URL:-unknown}"
 pr_url="${PR_URL:-}"
 
-field() { jq -r --arg k "$1" '.[$k] // "" | tostring | gsub("@"; "@​")' "$out/result.json"; }
+field() { jq -L "$here" -r --arg k "$1" 'include "safe"; .[$k] // "" | tostring | safe' "$out/result.json"; }
 
 body="$(mktemp)"
 trap 'rm -f "$body"' EXIT

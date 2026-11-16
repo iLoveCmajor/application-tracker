@@ -13,6 +13,8 @@
 # human_action, model, model_ok, cost_usd}. A failed or unreadable model run gives
 # category "unknown" with the reason, so the workflow still reports to a human.
 #
+# The key's value and credential-shaped strings are redacted from result.json.
+#
 # Env: ANTHROPIC_API_KEY, RESPONDER_MODEL (default claude-sonnet-5-5), RESPONDER_BUDGET_USD
 # (default 3), CLAUDE_BIN (default claude; the tests put a stub here).
 set -uo pipefail
@@ -28,6 +30,15 @@ model="${RESPONDER_MODEL:-claude-sonnet-5-5}"
 budget="${RESPONDER_BUDGET_USD:-3}"
 claude_bin="${CLAUDE_BIN:-claude}"
 tools="Read,Grep,Glob,Edit,Write"
+# --allowedTools Read is not scoped to the checkout, and /proc/self/environ holds the API key, so
+# the places outside the checkout that matter are denied by rule (permission rules: // is an
+# absolute path, ~ the home directory, a leading / the project root). The edit rules keep the
+# model's hands off what runs after it. Rules are defence in depth: the key is redacted from
+# result.json below, and verify.sh checks the changed files whatever the model was allowed to do.
+denied="Bash,WebFetch,WebSearch"
+# shellcheck disable=SC2088 # a literal ~ in a permission rule, not a path
+for d in //proc //sys //dev //etc //root //run //var //tmp "~/.*"; do denied="$denied,Read($d/**)"; done
+for d in "/.github/**" "/scripts/**" /Makefile; do denied="$denied,Edit($d),Write($d)"; done
 raw="$(mktemp)"
 err="$(mktemp)"
 prompt="$(mktemp)"
@@ -46,7 +57,7 @@ env -i PATH="$PATH" HOME="${HOME:-/tmp}" ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:
   --model "$model" \
   --tools "$tools" \
   --allowedTools "$tools" \
-  --disallowedTools "Bash,WebFetch,WebSearch" \
+  --disallowedTools "$denied" \
   --permission-mode acceptEdits \
   --strict-mcp-config \
   --no-session-persistence \
@@ -73,8 +84,16 @@ else
   ok=true
 fi
 
-jq --arg model "$model" --argjson ok "$ok" --arg cost "$cost" '
-  def text($n): (. // "" | tostring | .[0:$n]);
+# Whatever the model printed is redacted before anything is posted: the API key's own value
+# (a comment on a public issue is attacker-written text that reaches the model) and credential
+# shapes. The key comes in through the environment, not the command line.
+K="${ANTHROPIC_API_KEY:-}" jq --arg model "$model" --argjson ok "$ok" --arg cost "$cost" '
+  def redact:
+    (if ($ENV.K | length) >= 8 then split($ENV.K) | join("[redacted]") else . end)
+    | gsub("sk-ant-[A-Za-z0-9_-]+"; "[redacted]")
+    | gsub("gh[pousr]_[A-Za-z0-9]{20,}"; "[redacted]")
+    | gsub("github_pat_[A-Za-z0-9_]{20,}"; "[redacted]");
+  def text($n): (. // "" | tostring | redact | .[0:$n]);
   {
     category: (if ((.category // "") | IN("code", "infra", "unknown")) then .category else "unknown" end),
     cause: (.cause | text(600)),

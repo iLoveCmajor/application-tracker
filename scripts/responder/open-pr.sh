@@ -22,15 +22,34 @@ if [[ "$(jq -r .decision "$out/verdict.json")" != "pr" ]]; then
   echo "the verdict is not \"pr\"; nothing to open" >&2
   exit 1
 fi
+here="$(cd "$(dirname "$0")" && pwd)"
 base="${BASE_BRANCH:-main}"
 remote="${PUSH_REMOTE:-origin}"
 branch="responder/alert-$issue"
+
+# The same allowlist verify.sh enforces. Checked again here, on the patch itself, because the
+# artifact travelled between jobs and verify.sh's verdict is only a claim about it.
+allowed='^(backend/src/|backend/tests/|frontend/src/)'
+refuse() {
+  echo "refusing to open a pull request: $1" >&2
+  exit 1
+}
+numstat="$(git apply --numstat "$out/patch.diff")" || refuse "the patch does not read"
+paths="$(cut -f3- <<<"$numstat")"
+[[ -n "$paths" ]] || refuse "the patch is empty"
+grep -qF ' => ' <<<"$paths" && refuse "the patch renames files"
+outside="$(grep -Ev "$allowed" <<<"$paths" || true)"
+[[ -z "$outside" ]] || refuse "the patch touches files outside the allowed paths: $(tr '\n' ' ' <<<"$outside")"
 
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git checkout -B "$branch"
 git apply --index "$out/patch.diff"
-git commit --quiet -m "Responder fix for alert #$issue" -m "$(jq -r .cause "$out/result.json")"
+# What is actually staged, against what verify.sh said it checked.
+staged="$(git diff --cached --name-only --no-renames HEAD | sort)"
+[[ -z "$(grep -Ev "$allowed" <<<"$staged" || true)" ]] || refuse "the applied patch touches files outside the allowed paths"
+[[ "$staged" == "$(jq -r '.changed[]' "$out/verdict.json" | sort)" ]] || refuse "the patch does not match the verified file list"
+git commit --quiet -m "Responder fix for alert #$issue" -m "$(jq -L "$here" -r 'include "safe"; .cause | safe' "$out/result.json")"
 # The branch belongs to the responder; a later run on the same alert replaces it.
 git push --force "$remote" "HEAD:refs/heads/$branch"
 
@@ -39,8 +58,8 @@ files="$(jq -r '.changed[] | "- `\(.)`"' "$out/verdict.json")"
 body_file="$(mktemp)"
 trap 'rm -f "$body_file"' EXIT
 # Text from the model goes in with @ defused, so it can't mention anyone.
-jq -r --arg issue "$issue" --arg run "${RUN_URL:-unknown}" --arg tests "$tests" --arg files "$files" '
-  def safe: gsub("@"; "@​");
+jq -L "$here" -r --arg issue "$issue" --arg run "${RUN_URL:-unknown}" --arg tests "$tests" --arg files "$files" '
+  include "safe";
   "Proposed by the on-call responder for alert #\($issue). Refs #\($issue).\n\n" +
   "**Cause:** \(.cause | safe)\n\n" +
   "**Fix:** \(.fix | safe)\n\n" +

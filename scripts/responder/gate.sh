@@ -7,7 +7,11 @@
 # and issue 42 is open and labelled `alert`. Otherwise it ends the run green with a notice:
 # nothing is posted and nothing is opened.
 #
-# Env: HAS_KEY ("true" when the secret is set; the workflow never passes the key itself here),
+# Inputs are checked before anything is written to $GITHUB_OUTPUT: the issue number must be digits
+# only, and INPUT_URL (the dispatch's `url`, when given) must be one line starting with http:// or
+# https://. A bad one ends the run green with a notice; `issue=` is written only for a valid number.
+#
+# Env: INPUT_URL, HAS_KEY ("true" when the secret is set; the workflow never passes the key itself here),
 # ALLOW_UNLABELLED ("true" for a manual dispatch: someone with write access asked for this issue,
 # as in the code-fault demo), GH_TOKEN and GH_REPO (or a checkout gh can read the repo from).
 set -euo pipefail
@@ -18,8 +22,16 @@ go() {
   echo "run=$1"
 }
 
+# $issue may hold anything, even newlines: nothing of it is echoed until it is known to be digits.
 if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
-  echo "::notice title=Responder skipped::\"$issue\" is not an issue number."
+  echo "::notice title=Responder skipped::The issue input is not an issue number."
+  go false
+  exit 0
+fi
+echo "issue=$issue" >>"${GITHUB_OUTPUT:-/dev/null}"
+input_url="${INPUT_URL-}"
+if [[ -n "$input_url" ]] && { [[ ! "$input_url" =~ ^https?://[^[:space:]]+$ ]] || [[ "$input_url" == *$'\n'* ]]; }; then
+  echo "::notice title=Responder skipped::The url input must be one line starting with http:// or https://."
   go false
   exit 0
 fi

@@ -110,7 +110,7 @@ browser ──▶ FastAPI ──┬─ /            built React app (static file
 | API | `backend/tests/api` | every endpoint through FastAPI's TestClient on SQLite, every acceptance criterion by id, the routes against `openapi.yaml`, telemetry through in-memory OpenTelemetry exporters | 265 |
 | Integration | `backend/tests/integration` | migrations up and down on PostgreSQL, the full flow (create → status changes → history → follow-ups → funnel), cascades, UTC timestamps, hidden SQL parameters | 10 |
 | Frontend | `frontend/src/**/*.test.ts` | the typed API client, routing, formatting and overdue helpers (vitest) | 63 |
-| Scripts | `scripts/responder/tests/run.sh` | the on-call responder and the Smoke hand-off, with a fake `gh` and a stub model | 43 |
+| Scripts | `scripts/responder/tests/run.sh` | the on-call responder and the Smoke hand-off, with a fake `gh` and a stub model | 65 |
 
 The integration tests start a throwaway `postgres:16` with testcontainers, or use `TEST_DATABASE_URL`
 when it is set (CI uses a Postgres service container).
@@ -224,6 +224,20 @@ The scripts are in [`scripts/responder/`](scripts/responder).
   `frontend/src/`, and the tests pass (ruff and the backend unit and API tests; vitest when the
   frontend changed). The jobs hold the permissions: `diagnose` reads only, `pr` alone can push and
   open a pull request, `comment` alone can write to issues.
+- **Why the model can't talk its way past the checks.** Its file tools can edit anything in the
+  checkout, so code outside its reach enforces the rules: the workflow copies `scripts/responder/`
+  before the model starts and runs the evidence, model and check steps from that copy; the checks
+  run the tests first and only then take the changed-file list and the patch from the files (test
+  code the model wrote can't rewrite them); the allowlist is checked on that final state and again
+  on the patch itself in the `pr` job before anything is pushed. A change to anything outside the
+  three paths, a symbolic link or a credential-shaped string means no pull request.
+- **Untrusted text.** The packet holds the alert issue and its last three comments only when their
+  author is the `github-actions` bot (Smoke writes the alerts) or has write, maintain or admin
+  permission on the repository; anyone else's text is replaced by a line saying it was left out.
+  The model's `Read` is denied for `/proc`, `/sys`, `/etc`, `/var`, `/tmp` and dot-directories of
+  the home directory, its `Edit`/`Write` for `.github/`, `scripts/` and `Makefile`; the API key's
+  value and credential shapes are redacted from its answer; `@` and closing keywords (`Fixes #n`)
+  in its text are defused before anything is posted.
 - **What it posts.** One comment on the alert starting with `## Responder:`: the cause, what happened
   to any fix, an evidence summary and the run link. For `infra` or `unknown`, or a fix that failed
   its tests, it opens no pull request and asks a human to act. A fix goes to the branch

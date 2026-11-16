@@ -47,7 +47,7 @@ lint: ## Lint and check formatting of the backend
 	cd backend && uv run ruff check . && uv run ruff format --check .
 
 lint-scripts: ## shellcheck the scripts and actionlint the workflows (Docker)
-	docker run --rm -v "$(CURDIR):/mnt" -w /mnt koalaman/shellcheck:v0.11.0 scripts/*.sh scripts/responder/*.sh scripts/responder/tests/run.sh scripts/responder/tests/fake-gh
+	docker run --rm -v "$(CURDIR):/mnt" -w /mnt koalaman/shellcheck:v0.11.0 scripts/*.sh scripts/responder/*.sh scripts/responder/tests/run.sh scripts/responder/tests/tamper.sh scripts/responder/tests/fake-gh
 	docker run --rm -v "$(CURDIR):/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
 format: ## Format the backend

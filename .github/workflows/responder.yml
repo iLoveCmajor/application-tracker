@@ -62,9 +62,9 @@ jobs:
           ISSUE: ${{ github.event.issue.number || inputs.issue }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
-          scripts/responder/gate.sh "$ISSUE"
+          INPUT_URL: ${{ inputs.url }}
+        # gate.sh validates the inputs, then writes `issue` and `run` to the step outputs.
+        run: scripts/responder/gate.sh "$ISSUE"
 
   diagnose:
     needs: gate
@@ -93,6 +93,12 @@ jobs:
           claude --version || node "$(npm root --global)/@anthropic-ai/claude-code/install.cjs"
           claude --version
 
+      # The model can edit anything in the checkout, scripts/responder/ included. Every script that
+      # runs from here on (evidence, the model wrapper, the checks) runs from this copy, taken
+      # before the model starts.
+      - name: keep a pristine copy of the responder scripts
+        run: cp -R scripts/responder "$RUNNER_TEMP/responder-bin"
+
       - name: collect evidence (script, no model)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -101,7 +107,8 @@ jobs:
           ALERT_ISSUE: ${{ needs.gate.outputs.issue }}
           SMOKE_RUN_ID: ${{ inputs.smoke_run_id }}
           MAIN_REF: HEAD
-        run: scripts/responder/collect-evidence.sh "${TARGET_URL:-http://app-url-not-set.invalid}" "$RUNNER_TEMP/responder"
+        run: |
+          "$RUNNER_TEMP/responder-bin/collect-evidence.sh" "${TARGET_URL:-http://app-url-not-set.invalid}" "$RUNNER_TEMP/responder"
 
       # The only secret in this step is the API key, and run-model.sh starts claude with an
       # environment of PATH, HOME and that key alone. Tools: Read, Grep, Glob, Edit, Write.
@@ -109,11 +116,13 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           RESPONDER_MODEL: ${{ vars.RESPONDER_MODEL || 'claude-sonnet-5-5' }}
-        run: scripts/responder/run-model.sh "$RUNNER_TEMP/responder/packet.md" "$RUNNER_TEMP/responder/result.json"
+        run: |
+          "$RUNNER_TEMP/responder-bin/run-model.sh" "$RUNNER_TEMP/responder/packet.md" "$RUNNER_TEMP/responder/result.json"
 
       - name: check the change (paths, tests)
         id: verify
-        run: scripts/responder/verify.sh "$RUNNER_TEMP/responder"
+        run: |
+          "$RUNNER_TEMP/responder-bin/verify.sh" "$RUNNER_TEMP/responder"
 
       - uses: actions/upload-artifact@v7
         if: always()

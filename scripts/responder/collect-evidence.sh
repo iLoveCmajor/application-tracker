@@ -12,7 +12,7 @@
 # (EVIDENCE_TOTAL_CAP, default 24000), and known secret shapes are masked. An unreachable URL
 # still gives a readable packet: the endpoints then say "no response".
 #
-# Env: ALERT_ISSUE (issue number, read with gh), SMOKE_RUN_ID (Smoke run whose failed log to
+# Env: ALERT_ISSUE (issue number, read with gh; only trusted authors' text is kept, see is_trusted), SMOKE_RUN_ID (Smoke run whose failed log to
 # include; otherwise the last actions/runs/<id> link in the issue), MAIN_REF (default origin/main,
 # else HEAD), EVIDENCE_TIMEOUT (seconds per request, default 30), EVIDENCE_LOG_WAIT (seconds to
 # wait for the Smoke run to finish so its log exists, default 180).
@@ -74,10 +74,33 @@ tail_cap() {
 have_gh() { command -v gh >/dev/null 2>&1; }
 
 # --- the alert issue --------------------------------------------------------------------------
+# Anyone can write on a public issue, and this text goes to the model: only the issue and the last
+# three comments written by a trusted author are included. Trusted: the github-actions bot (Smoke
+# opens and comments on alerts as it) or a user with write, maintain or admin permission on the
+# repository (the owner is admin). The rest is left out and the packet says so.
+is_trusted() {
+  local login="$1" role repo_path="${GH_REPO:-}"
+  [[ -n "$repo_path" ]] || repo_path='{owner}/{repo}'
+  case "$login" in github-actions | app/github-actions | "github-actions[bot]") return 0 ;; esac
+  [[ "$login" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] || return 1
+  role="$(gh api "repos/$repo_path/collaborators/$login/permission" --jq .role_name 2>/dev/null || true)"
+  case "$role" in admin | maintain | write) return 0 ;; esac
+  return 1
+}
+
 alert_text=""
 if [[ -n "${ALERT_ISSUE:-}" ]]; then
-  if have_gh && gh issue view "$ALERT_ISSUE" --json number,title,body,comments >"$work/issue.json" 2>"$work/issue.err"; then
-    alert_text="$(jq -r '"#\(.number) \(.title)\n\n\(.body)\n" + ([.comments[-3:][] | "--- comment by \(.author.login // "unknown"):\n\(.body)"] | join("\n"))' "$work/issue.json")"
+  if have_gh && gh issue view "$ALERT_ISSUE" --json number,title,body,author,comments >"$work/issue.json" 2>"$work/issue.err"; then
+    trusted_json='[]'
+    while IFS= read -r login; do
+      [[ -z "$login" ]] && continue
+      if is_trusted "$login"; then trusted_json="$(jq -c --arg l "$login" '. + [$l]' <<<"$trusted_json")"; fi
+    done < <(jq -r '[.author.login, (.comments[-3:][] | .author.login)] | map(select(. != null)) | unique | .[]' "$work/issue.json")
+    alert_text="$(jq -r --argjson ok "$trusted_json" '
+      def trusted: (.author.login // "") as $l | ($ok | index($l)) != null;
+      def omitted: "[left out: written by \(.author.login // "an unknown user"), who is neither the github-actions bot nor a user with write access to this repository]";
+      (if trusted then "#\(.number) \(.title)\n\n\(.body)\n" else "#\(.number) \(omitted)\n" end) +
+      ([.comments[-3:][] | "--- comment by \(.author.login // "unknown"):\n" + (if trusted then .body else omitted end)] | join("\n"))' "$work/issue.json")"
   else
     alert_text="could not read issue #$ALERT_ISSUE: $(head -c 300 "$work/issue.err" 2>/dev/null)"
   fi
