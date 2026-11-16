@@ -462,7 +462,7 @@ dropped or renamed something the old code needs, fix forward instead.
 
 ## Known follow-ups
 
-Two issues are open and known, not hidden:
+These are open and known, not hidden:
 
 - [#33](https://github.com/iLoveCmajor/application-tracker/issues/33): on a database constraint
   violation PostgreSQL's own `DETAIL` text can carry application fields into the error log line.
@@ -470,6 +470,12 @@ Two issues are open and known, not hidden:
 - [#37](https://github.com/iLoveCmajor/application-tracker/issues/37): the responder's pull request
   should flag changed test files for the reviewer, and its `Read` deny rules were never checked
   against the live CLI.
+- **The free Render database expires around 2026-12-16.** A free Render Postgres lasts 30 days from
+  creation (see Free tier limits), and this one was created on 2026-11-16, so it expires about
+  2026-12-16. Confirm the exact date in the Render dashboard. After that date the live app and the
+  Smoke workflow fail until the database is replaced: create a new database from the Blueprint, set
+  `DATABASE_URL` to its connection string on both services (`application-tracker` and
+  `application-tracker-dev`, which share one database), and redeploy both.
 
 ## How it was built
 
