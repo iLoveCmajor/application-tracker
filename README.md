@@ -382,8 +382,8 @@ push to main -> tests (5 jobs) -> deploy-dev (automatic) -> approval -> deploy-p
   and [43933825399](https://github.com/iLoveCmajor/application-tracker/actions/runs/43933825399)
   (`1cb08c7`) were pushed to `main` back to back, with no approval in between. Both ran
   their test jobs and `deploy-dev` to success. The older run's `deploy-prod` was waiting for approval;
-  the newer run's `deploy-prod` showed as pending behind it in the `deploy-render` group (the owner saw
-  this on the Actions page; the API only shows the end state). GitHub did not cancel the older run on
+  the newer run's `deploy-prod` showed as pending behind it in the `deploy-render` group (seen with
+  `gh run view <id> --json jobs` while both runs were open; it cannot be re-read afterwards). GitHub did not cancel the older run on
   its own: its `deploy-prod` kept waiting until the owner cancelled that run, at which point its job
   and run ended as `cancelled`, and the newer run's `deploy-prod` moved to `waiting` for approval.
   What that means: approvals queue in order, and a newer push does not replace an older waiting
