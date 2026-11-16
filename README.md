@@ -124,9 +124,11 @@ when it is set (CI uses a Postgres service container).
 3. `integration`: the PostgreSQL tests against a service container.
 4. `scripts`: the responder and Smoke script tests, shellcheck and actionlint.
 5. `docker`: builds the production image.
-6. `deploy`: on `main` only, and only when 1–5 passed. Calls Render's deploy hook for that commit and
-   waits until the live `/health` reports the new commit SHA. A failing test means no deploy, and the
-   running version stays up.
+6. `deploy-dev`: on `main` only, and only when 1–5 passed. Calls the dev service's Render deploy hook
+   for that commit and waits until the dev `/health` reports the commit SHA.
+7. `deploy-prod`: after `deploy-dev`, and only once a reviewer approves the `production` environment.
+   Calls the prod deploy hook for the same commit and waits until the live `/health` reports it. A
+   failing test means no deploy, and the running version stays up. See [Dev and prod](#dev-and-prod).
 
 To go back to an earlier version, run the manual [Rollback](#rollback) workflow
 ([`rollback.yml`](.github/workflows/rollback.yml)).
@@ -291,11 +293,11 @@ The app is deployed on [Render](https://render.com) at
 <https://application-tracker-kvn5.onrender.com>: a free web service built from the root
 `Dockerfile`, with a free Render Postgres. [`render.yaml`](render.yaml) describes both.
 
-Deploys go through CI only. Render's own auto-deploy is off; the `deploy` job in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on a push to `main`, only after every
-other CI job has passed, calls the Render deploy hook for that commit, then polls `/health` until
-`version` equals the pushed SHA (up to 10 minutes). If the deploy hook secret or the `APP_URL`
-variable is missing, the job skips with a notice instead of failing.
+Deploys go through CI only. Render's own auto-deploy is off; the `deploy-prod` job in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on a push to `main` after the dev deploy
+and a manual approval ([Dev and prod](#dev-and-prod)), calls the Render deploy hook for that commit,
+then polls `/health` until `version` equals the pushed SHA (up to 10 minutes). If the deploy hook
+secret or the `APP_URL` variable is missing, the job skips with a notice instead of failing.
 
 To re-create the deployment (for example on a new Render account):
 
@@ -308,7 +310,7 @@ To re-create the deployment (for example on a new Render account):
    - **Secrets** tab → repository secret `RENDER_DEPLOY_HOOK_URL` = the deploy hook URL.
    - **Variables** tab → repository variable `APP_URL` = the service URL, e.g.
      `https://application-tracker-xxxx.onrender.com` (no trailing slash needed).
-4. Re-run the latest CI run on `main` (or push to `main`). The `deploy` job should end with
+4. Re-run the latest CI run on `main` (or push to `main`). The `deploy-prod` job should end with
    "`/health` reports version <sha>".
 5. If the service URL changed, update the **Live app** link at the top of this README and the one
    above.
@@ -323,13 +325,79 @@ Free tier limits:
 
 `/health` reports the deployed commit from `RENDER_GIT_COMMIT`, which Render sets on every deploy.
 
+### Dev and prod
+
+Every green push to `main` goes to a dev service first; the same commit reaches production only after
+a manual approval:
+
+```text
+push to main -> tests (5 jobs) -> deploy-dev (automatic) -> approval -> deploy-prod
+                                   dev /health = SHA        "production" environment
+                                                            prod /health = SHA
+```
+
+- `deploy-dev` ([`ci.yml`](.github/workflows/ci.yml)) calls the dev deploy hook with the commit SHA and
+  waits until the dev `/health` reports it. It never runs on pull requests. Without the
+  `RENDER_DEV_DEPLOY_HOOK_URL` secret or the `DEV_APP_URL` variable it ends green with a notice and
+  deploys nothing, and `deploy-prod` is still offered.
+- `deploy-prod` runs when every test job passed and `deploy-dev` succeeded or was skipped; a failed dev
+  deploy or a failed test job means no prod deploy. It uses the GitHub environment `production`, so
+  the run stops at "Waiting" until the required reviewer approves.
+- **Approve:** open the run on the Actions tab, click **Review deployments**, tick `production`,
+  **Approve and deploy** (or **Reject**). Prod then deploys the SHA of that run.
+- **Newer pushes:** dev has its own concurrency group, so a commit waiting for approval never blocks the
+  dev deploy of newer commits. Prod shares the `deploy-render` group with Rollback, so the two never
+  run at once. Prod always deploys the SHA of the run you approve, so check the commit shown on the
+  run before approving. What GitHub does with an older run still waiting for approval when a newer
+  one arrives is not confirmed in its docs; it was not tested yet and gets checked with two pushes
+  after the owner setup (AC-28.7).
+- Rollback ([below](#rollback)) and Smoke target prod only (`APP_URL`, `RENDER_DEPLOY_HOOK_URL`); they
+  never read the dev settings.
+
+**Shared database.** Render allows one free Postgres per account, so `application-tracker-dev` uses
+the same `application-tracker-db` as prod. Consequences: the app runs migrations on start, so a
+migration reaches the production database when it reaches dev, before anyone approves the prod
+deploy; dev and prod see the same data (`SEED_DEMO_DATA` only seeds an empty database); and rejecting
+the prod approval does not undo a migration. Write migrations that the old code can still run against
+(add, don't drop or rename).
+
+**Owner setup, in this order:**
+
+1. Create the `production` environment with yourself as required reviewer **before merging**. If
+   the environment doesn't exist when `deploy-prod` first runs, GitHub creates it without protection
+   rules and prod deploys without approval. In the UI: **Settings → Environments → New environment**,
+   name `production`, tick **Required reviewers**, add yourself, **Save protection rules**. Or from
+   the terminal (17879024 is the id of `iLoveCmajor`):
+
+   ```sh
+   gh api --method PUT repos/iLoveCmajor/application-tracker/environments/production \
+     --input - <<< '{"reviewers":[{"type":"User","id":17879024}]}'
+   ```
+
+   Check: `gh api repos/iLoveCmajor/application-tracker/environments/production --jq '.protection_rules'`
+   lists a `required_reviewers` rule.
+2. Merge the pull request. Render's Blueprint sync creates the `application-tracker-dev` service
+   (and leaves prod and the database as they are).
+3. In Render, confirm the dev service exists with **Auto-Deploy** off, and copy its **Deploy Hook**
+   (Settings) and its URL.
+4. Set the secret and the variable:
+
+   ```sh
+   pbpaste | gh secret set RENDER_DEV_DEPLOY_HOOK_URL
+   gh variable set DEV_APP_URL --body https://application-tracker-dev-xxxx.onrender.com
+   ```
+
+5. Push to `main` (or re-run the latest run): the dev `/health` reports the SHA while prod still
+   reports the previous one, and `deploy-prod` shows "Waiting". Approve it as above.
+
 ### Rollback
 
 Use it when a deploy broke production (the Smoke workflow opened an `alert` issue, or the app
 misbehaves) and the fix will take longer than going back. [`rollback.yml`](.github/workflows/rollback.yml)
 deploys an earlier commit of `main` through the same deploy hook and waits until `/health` reports it,
-like the CI `deploy` job (both use [`scripts/render-deploy.sh`](scripts/render-deploy.sh)). It shares
-the `deploy-render` concurrency group with that job, so a rollback and a deploy never run at once.
+like the CI `deploy-prod` job (both use [`scripts/render-deploy.sh`](scripts/render-deploy.sh)). It
+targets prod only, never dev. It shares the `deploy-render` concurrency group with that job, so a
+rollback and a prod deploy never run at once.
 
 - **Back one commit:** Actions → **Rollback** → **Run workflow**, leave `sha` empty. It reads the live
   commit from `/health` and deploys its parent; the log names both SHAs. From the terminal:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Deploy one commit to Render and wait until the live /health reports it. Used by the CI `deploy`
-# job (#11) and the Rollback workflow (#27).
+# Deploy one commit to Render and wait until the live /health reports it. Used by the CI `deploy-dev` and
+# `deploy-prod` jobs (#11, #28) and the Rollback workflow (#27).
 #
 #   DEPLOY_HOOK_URL=… APP_URL=https://… scripts/render-deploy.sh <full commit sha>
 #
