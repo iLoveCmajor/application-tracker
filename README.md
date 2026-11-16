@@ -3,7 +3,7 @@
 A single-user web app for tracking job applications through stages, with automatic follow-up dates
 and funnel numbers. Final project for [AI Dev Tools Zoomcamp 2026](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp).
 
-**Live app:** _not deployed yet_ (free tier: it sleeps after 15 minutes idle, so the first request takes about a minute)
+**Live app:** https://application-tracker-kvn5.onrender.com (free tier: it sleeps after 15 minutes idle, so the first request takes about a minute)
 
 ## The problem
 
