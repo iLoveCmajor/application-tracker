@@ -42,6 +42,8 @@ def reached_screen(to_statuses: Iterable[Status]) -> bool:
 
 def screen_rate(reached_screen: int, applied: int) -> float | None:
     """`reached_screen / applied` rounded half up to 3 decimals; None when nothing was applied."""
+    if applied == 0:
+        return None
     rate = (Decimal(reached_screen) / Decimal(applied)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
     return float(rate)
 
