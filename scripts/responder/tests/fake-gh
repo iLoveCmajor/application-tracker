@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# A stand-in for the gh CLI in the responder tests. Logs every call to $FAKE_GH_DIR/calls.log and
+# answers from files in $FAKE_GH_DIR:
+#   issue.json         what `gh issue view` returns (filtered by --jq when given)
+#   open-alert         the number `gh issue list` returns (empty: none open)
+#   run.log            what `gh run view --log-failed` prints
+# Bodies of comments and pull requests are saved as comment-<n>.md and pr-body.md.
+set -euo pipefail
+dir="${FAKE_GH_DIR:?}"
+printf '%s\n' "$*" >>"$dir/calls.log"
+
+jq_expr=""
+body_file=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    --jq) jq_expr="${args[$((i + 1))]}" ;;
+    --body-file) body_file="${args[$((i + 1))]}" ;;
+    --body)
+      body_file="$dir/body.tmp"
+      printf '%s\n' "${args[$((i + 1))]}" >"$body_file"
+      ;;
+  esac
+done
+filter() { if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr"; else cat; fi; }
+
+case "$1 $2" in
+  "issue view") filter <"$dir/issue.json" ;;
+  "issue list") cat "$dir/open-alert" 2>/dev/null || true ;;
+  "issue comment") cp "$body_file" "$dir/comment-$3.md" ;;
+  "issue create") echo "https://github.com/example/tracker/issues/99" ;;
+  "workflow run") : ;;
+  "run view")
+    if [[ " $* " == *" --log-failed "* ]]; then cat "$dir/run.log"; else echo '{"status":"completed"}' | filter; fi
+    ;;
+  "pr list") echo "" ;;
+  "pr create")
+    cp "$body_file" "$dir/pr-body.md"
+    echo "https://github.com/example/tracker/pull/100"
+    ;;
+  "pr comment") cp "$body_file" "$dir/pr-comment.md" ;;
+  *)
+    echo "fake gh: unexpected call: $*" >&2
+    exit 1
+    ;;
+esac

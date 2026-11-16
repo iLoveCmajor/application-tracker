@@ -1,0 +1,179 @@
+# On-call responder (#26). When an alert issue appears, a script collects evidence, a headless
+# Claude Code agent diagnoses it and may edit files, and this workflow (not the model) checks the
+# change, posts the diagnosis on the issue and, for a code fix whose tests pass, opens a pull request.
+#
+# Triggers:
+#   - workflow_dispatch: Smoke starts it with `gh workflow run` when it opens a new alert. The issue
+#     Smoke opens with GITHUB_TOKEN fires no `issues` event, but a dispatch does start a run. The
+#     owner can also dispatch it by hand for any open issue, and on another branch (the demo in
+#     the README); the pull request then targets that branch.
+#   - issues: labeled with `alert` by a person (adding the label, or opening an issue with it; GitHub
+#     sends `labeled` for labels set at creation, so `opened` isn't needed and would run it twice).
+# Comments, edits, other labels and pull requests don't start it, and nothing it posts can: its
+# comments and pull requests are made with GITHUB_TOKEN and it never adds a label.
+name: Responder
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Alert issue number
+        required: true
+      smoke_run_id:
+        description: Smoke run whose failed log goes into the evidence (optional)
+        required: false
+        default: ""
+      url:
+        description: Base URL to collect evidence from (default the APP_URL repository variable)
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: responder-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: false
+
+env:
+  CLAUDE_CODE_VERSION: 2.1.311
+
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'alert'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      issue: ${{ steps.gate.outputs.issue }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: check the secret and the issue
+        id: gate
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          ALLOW_UNLABELLED: ${{ github.event_name == 'workflow_dispatch' }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
+          scripts/responder/gate.sh "$ISSUE"
+
+  diagnose:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: read
+      actions: read
+    outputs:
+      decision: ${{ steps.verify.outputs.decision }}
+    steps:
+      # No credentials left in .git/config: the model reads this checkout.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 50
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v10.3.3 # setup-uv publishes no floating major tag
+      - name: install Claude Code ${{ env.CLAUDE_CODE_VERSION }}
+        run: |
+          npm install --global --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          claude --version || node "$(npm root --global)/@anthropic-ai/claude-code/install.cjs"
+          claude --version
+
+      - name: collect evidence (script, no model)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_URL: ${{ inputs.url || vars.APP_URL }}
+          ALERT_ISSUE: ${{ needs.gate.outputs.issue }}
+          SMOKE_RUN_ID: ${{ inputs.smoke_run_id }}
+          MAIN_REF: HEAD
+        run: scripts/responder/collect-evidence.sh "${TARGET_URL:-http://app-url-not-set.invalid}" "$RUNNER_TEMP/responder"
+
+      # The only secret in this step is the API key, and run-model.sh starts claude with an
+      # environment of PATH, HOME and that key alone. Tools: Read, Grep, Glob, Edit, Write.
+      - name: diagnose (model, file tools only)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESPONDER_MODEL: ${{ vars.RESPONDER_MODEL || 'claude-sonnet-5-5' }}
+        run: scripts/responder/run-model.sh "$RUNNER_TEMP/responder/packet.md" "$RUNNER_TEMP/responder/result.json"
+
+      - name: check the change (paths, tests)
+        id: verify
+        run: scripts/responder/verify.sh "$RUNNER_TEMP/responder"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: responder
+          path: ${{ runner.temp }}/responder
+          retention-days: 14
+
+  pr:
+    needs: [gate, diagnose]
+    if: needs.diagnose.outputs.decision == 'pr'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      url: ${{ steps.open.outputs.url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: responder
+          path: ${{ runner.temp }}/responder
+      - name: push responder/alert-${{ needs.gate.outputs.issue }} and open the pull request
+        id: open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.gate.outputs.issue }}
+          # The branch the model worked on: main, or the branch a manual dispatch named (demo).
+          BASE_BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: scripts/responder/open-pr.sh "$ISSUE" "$RUNNER_TEMP/responder"
+
+  comment:
+    needs: [gate, diagnose, pr]
+    if: always() && needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: responder
+          path: ${{ runner.temp }}/responder
+      - name: post the Responder comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.gate.outputs.issue }}
+          PR_URL: ${{ needs.pr.outputs.url }}
+          PR_RESULT: ${{ needs.pr.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/responder"
+          scripts/responder/post-comment.sh "$ISSUE" "$RUNNER_TEMP/responder"

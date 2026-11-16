@@ -102,7 +102,7 @@ browser ──▶ FastAPI ──┬─ /            built React app (static file
 
 ## Tests
 
-`make test` runs four suites; CI runs the same ones on every pull request.
+`make test` runs five suites; CI runs the same ones on every pull request.
 
 | Suite | Where | What it covers | Count |
 | --- | --- | --- | --- |
@@ -110,6 +110,7 @@ browser ──▶ FastAPI ──┬─ /            built React app (static file
 | API | `backend/tests/api` | every endpoint through FastAPI's TestClient on SQLite, every acceptance criterion by id, the routes against `openapi.yaml`, telemetry through in-memory OpenTelemetry exporters | 265 |
 | Integration | `backend/tests/integration` | migrations up and down on PostgreSQL, the full flow (create → status changes → history → follow-ups → funnel), cascades, UTC timestamps, hidden SQL parameters | 10 |
 | Frontend | `frontend/src/**/*.test.ts` | the typed API client, routing, formatting and overdue helpers (vitest) | 63 |
+| Scripts | `scripts/responder/tests/run.sh` | the on-call responder and the Smoke hand-off, with a fake `gh` and a stub model | 43 |
 
 The integration tests start a throwaway `postgres:16` with testcontainers, or use `TEST_DATABASE_URL`
 when it is set (CI uses a Postgres service container).
@@ -121,8 +122,9 @@ when it is set (CI uses a Postgres service container).
 1. `backend`: ruff, format check, mypy (strict), unit and API tests.
 2. `frontend`: typecheck, vitest, production build.
 3. `integration`: the PostgreSQL tests against a service container.
-4. `docker`: builds the production image.
-5. `deploy`: on `main` only, and only when 1–4 passed. Calls Render's deploy hook for that commit and
+4. `scripts`: the responder and Smoke script tests, shellcheck and actionlint.
+5. `docker`: builds the production image.
+6. `deploy`: on `main` only, and only when 1–5 passed. Calls Render's deploy hook for that commit and
    waits until the live `/health` reports the new commit SHA. A failing test means no deploy, and the
    running version stays up.
 
@@ -193,7 +195,81 @@ never records request bodies, query strings, client addresses or SQL. The log li
 which carry none of them either. Health checks (`/health`, `/ready`) are not traced.
 Seed data at start-up goes through the same status-change code, so the counter starts above zero.
 
-An on-call agent is out of scope for this project.
+### On-call responder
+
+[`responder.yml`](.github/workflows/responder.yml) answers an alert first: a script collects the
+evidence, Claude Code (headless) diagnoses it and may edit code, and the workflow, not the model,
+checks the change, posts the diagnosis and opens a pull request for a fix that passes its tests.
+The scripts are in [`scripts/responder/`](scripts/responder).
+
+- **Trigger.** Smoke starts it with `gh workflow run` when it opens a new alert (an issue opened
+  with `GITHUB_TOKEN` fires no `issues` event; a dispatch does). A person adding the `alert` label
+  to an issue, or opening one with it, starts it too. Comments, edits, other labels, pull requests
+  and repeat failures on an open alert don't; to run it again, remove and re-add the label. Its own
+  comments and pull requests can't start it: they're made with `GITHUB_TOKEN`, and it never adds a
+  label. One run per alert at a time.
+- **Evidence before the model.** `collect-evidence.sh` gathers the alert issue, status and body of
+  the live `/health`, `/ready` and `/api/v1/stats/funnel`, the failed Smoke run's log, the deployed
+  version against `main`, and the last ten commits. Each part is capped at 4 KB and the packet at
+  24 KB; credential-shaped strings are masked. An unreachable app still gives a packet ("no
+  response").
+- **What the model may do.** Read, search and edit files in the checkout (`Read`, `Grep`, `Glob`,
+  `Edit`, `Write`), nothing else: no shell, so it can't run code that reads its key or reaches the
+  network; no web tools, no MCP servers, no `gh`, no `git`. It runs with an environment of `PATH`,
+  `HOME` and `ANTHROPIC_API_KEY` only, in a checkout with no stored credentials, with a $3 budget
+  cap. It answers with JSON: `category` (`code`, `infra`, `unknown`), `cause`, `summary`, `fix`,
+  `human_action`.
+- **What code decides.** `verify.sh` allows a pull request only when the category is `code`, the app
+  answered at all, the changed files are all under `backend/src/`, `backend/tests/` or
+  `frontend/src/`, and the tests pass (ruff and the backend unit and API tests; vitest when the
+  frontend changed). The jobs hold the permissions: `diagnose` reads only, `pr` alone can push and
+  open a pull request, `comment` alone can write to issues.
+- **What it posts.** One comment on the alert starting with `## Responder:`: the cause, what happened
+  to any fix, an evidence summary and the run link. For `infra` or `unknown`, or a fix that failed
+  its tests, it opens no pull request and asks a human to act. A fix goes to the branch
+  `responder/alert-<n>` with a pull request that refers to the alert, lists the tests it ran, and
+  says that CI didn't start (a pull request opened with `GITHUB_TOKEN` starts no workflows: push to
+  the branch, or close and reopen it, to run CI). People merge, deploy and roll back.
+- **Without the API key** the run ends green with a notice naming `ANTHROPIC_API_KEY`, and posts
+  nothing.
+
+`make test-scripts` tests all of this locally with a fake `gh` and a stub in place of the model;
+`make lint-scripts` runs shellcheck and actionlint (Docker).
+
+Owner setup (once):
+
+1. Copy an Anthropic API key, then `pbpaste | gh secret set ANTHROPIC_API_KEY` (the key never goes
+   in a file or the shell history).
+2. Optional: `gh variable set RESPONDER_MODEL --body <model id>` to use another model than
+   `claude-sonnet-5-5`.
+3. Let workflows open pull requests: **Settings → Actions → General → Workflow permissions →
+   Allow GitHub Actions to create and approve pull requests**, or
+   `gh api -X PUT repos/iLoveCmajor/application-tracker/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true`.
+   Without it the `pr` job fails and the comment says the pull request couldn't be opened.
+
+Demos (after the setup):
+
+- **Not a code problem.** With no `alert` issue open, run
+  `gh workflow run smoke.yml -f url=https://application-tracker-demo-unreachable.invalid`. After
+  about four minutes Smoke opens an alert and starts the responder, which comments
+  `## Responder: the app does not answer, a human needs to act` and opens no pull request. Close
+  the alert afterwards.
+- **A code fault.** Break the funnel on a demo branch and point the responder at it by hand:
+
+  ```sh
+  git switch -c demo/responder-fault origin/main
+  # drop the "nothing applied" guard from screen_rate: the funnel then fails for a source with no
+  # applied applications, and the unit tests fail
+  perl -0pi -e 's/    if applied == 0:\n        return None\n//' backend/src/app/services/funnel.py
+  git commit -am "Funnel: simplify screen_rate" && git push -u origin demo/responder-fault
+  gh issue create --title "Funnel page shows an error" \
+    --body "GET /api/v1/stats/funnel returns 500 on demo/responder-fault."
+  gh workflow run responder.yml --ref demo/responder-fault -f issue=<that issue's number>
+  ```
+
+  The responder comments with the cause (the missing guard in `screen_rate`) and opens a pull
+  request from `responder/alert-<n>` into `demo/responder-fault` that restores it, with its own test
+  run passing. Clean up: close the pull request and the issue, delete both branches.
 
 ## Deployment
 
@@ -297,5 +373,5 @@ actually happened:
 | [`Dockerfile`](Dockerfile), [`compose.yaml`](compose.yaml) | image and the local full system |
 | [`docker/observability/`](docker/observability) | Collector, Prometheus, Tempo, Loki and Grafana config for the `observability` profile |
 | [`render.yaml`](render.yaml) | Render Blueprint |
-| `.github/workflows/` | CI/CD and the smoke-check alert |
-| `scripts/` | smoke check, alert, deploy and rollback scripts used by the workflows |
+| `.github/workflows/` | CI/CD, the smoke-check alert and the on-call responder |
+| `scripts/` | smoke check, alert, deploy and rollback scripts used by the workflows; `scripts/responder/` for the on-call responder |

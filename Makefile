@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev dev-api dev-web test test-unit test-api test-integration test-web lint format typecheck build check migrate migration up down clean
+.PHONY: help install dev dev-api dev-web test test-unit test-api test-integration test-web test-scripts lint lint-scripts format typecheck build check migrate migration up down clean
 
 # Let uv use backend/.venv even when another virtualenv is active in the shell.
 unexport VIRTUAL_ENV
@@ -26,7 +26,7 @@ dev-api: ## Run only the API (http://localhost:8000, docs at /docs)
 dev-web: ## Run only the UI, against the API on port 8000
 	cd frontend && npm run dev
 
-test: test-unit test-api test-integration test-web ## Run every test: unit, API, integration, frontend
+test: test-unit test-api test-integration test-web test-scripts ## Run every test: unit, API, integration, frontend, scripts
 
 test-unit: ## Backend unit tests (no database)
 	cd backend && uv run pytest -q tests/unit
@@ -40,8 +40,15 @@ test-integration: ## Backend tests against PostgreSQL (Docker, or TEST_DATABASE_
 test-web: ## Frontend tests
 	cd frontend && npm test
 
+test-scripts: ## Responder and Smoke scripts with a fake gh and a stub model (bash, git, jq, curl, python3)
+	scripts/responder/tests/run.sh
+
 lint: ## Lint and check formatting of the backend
 	cd backend && uv run ruff check . && uv run ruff format --check .
+
+lint-scripts: ## shellcheck the scripts and actionlint the workflows (Docker)
+	docker run --rm -v "$(CURDIR):/mnt" -w /mnt koalaman/shellcheck:v0.11.0 scripts/*.sh scripts/responder/*.sh scripts/responder/tests/run.sh scripts/responder/tests/fake-gh
+	docker run --rm -v "$(CURDIR):/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
 format: ## Format the backend
 	cd backend && uv run ruff format . && uv run ruff check --fix .
