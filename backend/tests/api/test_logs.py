@@ -1,4 +1,7 @@
-"""AC-12.1 to AC-12.5: JSON request logs with a request id, no private data, LOG_LEVEL, errors."""
+"""AC-12.1 to AC-12.5: JSON request logs with a request id, no private data, LOG_LEVEL, errors.
+
+AC-25.1 to AC-25.3: a failing SQL statement never puts its bound parameters in an error or a log line.
+"""
 
 import json
 import logging
@@ -10,7 +13,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from helpers import API, assert_error, change_status, create_application
+from sqlalchemy import Engine, text
+from sqlalchemy.exc import DBAPIError
 
+from app.db.engine import create_db_engine
 from app.logs import configure_logging
 
 REQUEST_FIELDS = {"timestamp", "level", "message", "request_id", "method", "path", "status", "duration_ms"}
@@ -220,3 +226,66 @@ def test_ac12_5_unhandled_exception_logs_one_error_line_with_the_request_id(
     assert (line["method"], line["path"], line["status"]) == ("GET", "/test-only/boom", 500)
     assert "RuntimeError" in line["exc_info"]
     assert request_lines(entries) == [line]
+
+
+# ---- AC-25 ----------------------------------------------------------------------
+
+CANARY = "param-leak-canary-25"
+# A statement that fails at the database itself, with the canary as a bound parameter.
+FAILING_SQL = text("INSERT INTO no_such_table (value) VALUES (:value)")
+
+
+def sql_failure_client(client: TestClient) -> TestClient:
+    """The app with a test-only route that runs FAILING_SQL on the app's own engine."""
+    app = client.app
+    assert isinstance(app, FastAPI)
+    engine: Engine = app.state.engine
+
+    def fail() -> None:
+        with engine.begin() as connection:
+            connection.execute(FAILING_SQL, {"value": CANARY})
+
+    app.add_api_route("/test-only/sql-failure", fail, methods=["POST"])
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["sqlite://", "sqlite:///./some.db", "postgresql+psycopg://user:pw@db.invalid:5432/tracker"],
+)
+def test_ac25_1_every_engine_hides_parameters(url: str) -> None:
+    engine = create_db_engine(url)  # creating an engine does not connect
+    try:
+        assert engine.hide_parameters is True
+    finally:
+        engine.dispose()
+
+
+def test_ac25_2_raised_error_does_not_contain_parameters(engine: Engine) -> None:
+    with pytest.raises(DBAPIError) as raised, engine.begin() as connection:
+        connection.execute(FAILING_SQL, {"value": CANARY})
+    assert "no_such_table" in str(raised.value)
+    assert CANARY not in str(raised.value)
+    assert CANARY not in repr(raised.value)
+
+
+def test_ac25_2_error_log_line_does_not_contain_parameters(client: TestClient, info_logs: ReadLogs) -> None:
+    failing = sql_failure_client(client)
+    failing.post("/test-only/sql-failure")
+    entries = info_logs()
+    (line,) = [e for e in entries if e["level"] == "ERROR"]
+    assert "no_such_table" in line["exc_info"]  # the traceback is there, with the statement
+    assert CANARY not in json.dumps(entries)
+
+
+def test_ac25_3_failing_statement_still_answers_internal_error_with_request_id(
+    client: TestClient, info_logs: ReadLogs
+) -> None:
+    failing = sql_failure_client(client)
+    res = failing.post("/test-only/sql-failure", headers={"X-Request-ID": "abc-sql-500"})
+    error = assert_error(res, 500, "internal_error")
+    assert error["details"] == {}
+    assert res.headers["X-Request-ID"] == "abc-sql-500"
+    assert CANARY not in res.text and "no_such_table" not in res.text
+    (line,) = [e for e in info_logs() if e["level"] == "ERROR"]
+    assert (line["request_id"], line["status"]) == ("abc-sql-500", 500)

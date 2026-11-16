@@ -6,10 +6,14 @@ from sqlalchemy.pool import StaticPool
 
 
 def create_db_engine(url: str) -> Engine:
-    """An engine for any SQLAlchemy URL, with the SQLite settings the app relies on."""
+    """An engine for any SQLAlchemy URL, with the SQLite settings the app relies on.
+
+    Every engine hides bound parameters (application fields) from its error messages, so a
+    failing statement never puts them into a log line (#25).
+    """
     if make_url(url).get_backend_name() == "sqlite":
         return _sqlite_engine(url)
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(url, pool_pre_ping=True, hide_parameters=True)
 
 
 def _sqlite_engine(url: str) -> Engine:
@@ -21,6 +25,7 @@ def _sqlite_engine(url: str) -> Engine:
         connect_args={"check_same_thread": False, "timeout": 30},
         # An in-memory database exists per connection, so share a single one.
         poolclass=StaticPool if in_memory else None,
+        hide_parameters=True,
     )
 
     @event.listens_for(engine, "connect")
