@@ -380,12 +380,18 @@ push to main -> tests (5 jobs) -> deploy-dev (automatic) -> approval -> deploy-p
   one arrives is not confirmed in its docs; it was not tested yet and gets checked with two pushes
   after the owner setup (AC-28.7).
 - Live run: CI run
-  [43924822675](https://github.com/iLoveCmajor/application-tracker/actions/runs/43924822675) (the push of
-  #28 to `main`, `f302534`): the five test jobs passed; `deploy-dev` ended green but **deployed
-  nothing**, because the dev secret and variable were not set yet (its notice says so); the run then
-  waited on the `production` environment, the owner approved it, and `deploy-prod` succeeded with
-  `/health` reporting `f302534`. So the approval gate and the prod deploy are shown in that run; a dev
-  deploy that reaches a dev service is not.
+  [43931665087](https://github.com/iLoveCmajor/application-tracker/actions/runs/43931665087) (the push of
+  `b47c764` to `main`). The five test jobs passed. `deploy-dev` deployed to the dev service, and its
+  log shows the dev `/health` reporting `b47c764`. The run then waited on the `production`
+  environment, `iLoveCmajor` approved it, and `deploy-prod` succeeded with the live `/health`
+  reporting `b47c764`.
+- That run needed a re-run. On attempt 1, `deploy-dev` failed: the log shows
+  `curl: (3) URL rejected: Malformed input to a URL function` and "The deploy hook returned HTTP 000",
+  because the dev hook secret held a malformed value, and `deploy-prod` was skipped. The owner
+  re-saved the secret and re-ran the run; on attempt 2 `deploy-dev` and `deploy-prod` passed. An
+  earlier run of #28 (`f302534`,
+  [43924822675](https://github.com/iLoveCmajor/application-tracker/actions/runs/43924822675)) had
+  `deploy-dev` skip with a notice, because the dev secret and variable were not set yet.
 - Rollback ([below](#rollback)) and Smoke target prod only (`APP_URL`, `RENDER_DEPLOY_HOOK_URL`); they
   never read the dev settings.
 
