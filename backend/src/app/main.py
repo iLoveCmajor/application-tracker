@@ -16,6 +16,7 @@ from app.logs import RequestLogMiddleware, configure_logging
 from app.repositories.sql import open_repository
 from app.services import clock
 from app.services.seed import seed_if_empty
+from app.telemetry import Telemetry, instrument, telemetry_from_env
 
 API_PREFIX = "/api/v1"
 
@@ -28,12 +29,15 @@ def create_app(
     migrate: bool = True,
     seed: bool = False,
     frontend_dir: Path | None = None,
+    telemetry: Telemetry | None = None,
 ) -> FastAPI:
     """Build the app on `engine`, or on DATABASE_URL (default: a local SQLite file).
 
     With `migrate`, pending Alembic migrations run on startup, before any request is served.
     With `seed`, an empty database then gets the invented demo applications.
     With `frontend_dir`, the built frontend is served at / (see api/frontend.py).
+    With `telemetry`, requests are traced and measured and logs exported (see telemetry.py);
+    `create_app` itself never turns telemetry on.
     """
     owns_engine = engine is None
     db = engine if engine is not None else create_db_engine(database_url())
@@ -49,6 +53,8 @@ def create_app(
         yield
         if owns_engine:
             db.dispose()
+        if telemetry is not None:
+            telemetry.shutdown()
 
     app = FastAPI(title="Application Tracker API", version=app_version(), lifespan=lifespan)
     app.state.engine = db
@@ -60,9 +66,12 @@ def create_app(
     app.include_router(stats.router, prefix=API_PREFIX)
     if frontend_dir is not None:
         mount_frontend(app, frontend_dir)  # last: its catch-all must not shadow the routes above
+    if telemetry is not None:
+        instrument(app, telemetry)
     return app
 
 
 # Before the app is built, so its startup lines (migrations, seed, uvicorn's own) are JSON too.
 configure_logging()
-app = create_app(seed=seed_demo_data(), frontend_dir=static_dir())
+# Telemetry only with OTEL_EXPORTER_OTLP_ENDPOINT set; otherwise None and nothing is exported.
+app = create_app(seed=seed_demo_data(), frontend_dir=static_dir(), telemetry=telemetry_from_env())

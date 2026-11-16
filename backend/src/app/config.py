@@ -38,3 +38,11 @@ def static_dir() -> Path | None:
     """
     value = os.environ.get("STATIC_DIR")
     return Path(value) if value else None
+
+
+def otel_endpoint() -> str | None:
+    """OTEL_EXPORTER_OTLP_ENDPOINT: the OTLP/HTTP collector, e.g. http://otel-collector:4318.
+
+    Unset or blank: telemetry is off (app/telemetry.py). Production on Render leaves it unset.
+    """
+    return os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip() or None

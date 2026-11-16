@@ -1,0 +1,46 @@
+# OpenTelemetry Collector for the `observability` Compose profile (#29).
+# The app sends traces, metrics and logs over OTLP/HTTP to :4318; the collector forwards each signal
+# to its store: traces to Tempo, metrics to Prometheus (its OTLP receiver), logs to Loki (its OTLP
+# endpoint). The app already strips everything but allowlisted attributes before export.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 2s
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  otlphttp/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
+    tls:
+      insecure: true
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+  # One line per batch on the collector's stdout (`docker compose logs otel-collector`).
+  # Set verbosity to detailed to print every span, data point and log record with its attributes.
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/prometheus, debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/loki, debug]

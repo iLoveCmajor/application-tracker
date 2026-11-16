@@ -161,12 +161,16 @@ typed client in `frontend/src/api/`. Hash routing, five views:
 - **Container:** one multi-stage `Dockerfile`: build the frontend, then a Python image serves the API
   and the built frontend. Migrations run on start.
 - **Config:** environment variables only — `DATABASE_URL`, `LOG_LEVEL`, `SEED_DEMO_DATA`,
-  `APP_VERSION`. `.env.example` documents them.
+  `APP_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`. `.env.example` documents them.
 - **Seed data:** with `SEED_DEMO_DATA=true` and an empty database, the app creates about ten invented
   applications at start (made-up companies, no real people) so a fresh deployment has something to show.
 - **Logs:** one JSON object per line. Each request logs method, path, status, duration and a request id
   (taken from `X-Request-ID` or generated, and returned in that header). No request bodies, no
   application fields in logs.
+- **Telemetry (#29):** with `OTEL_EXPORTER_OTLP_ENDPOINT` set, OpenTelemetry traces, metrics and the
+  same JSON log lines (with `trace_id`, `span_id`) go to an OTLP collector; unset, telemetry is off.
+  Local only: the Compose `observability` profile (Collector, Prometheus, Tempo, Loki, Grafana). No
+  application fields or credentials in any signal.
 - **Tests:** unit tests for the rules and the funnel maths, API tests on SQLite, integration tests on
   PostgreSQL. `make test` runs all of them and the frontend tests.
 

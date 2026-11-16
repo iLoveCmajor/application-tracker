@@ -11,6 +11,7 @@ from app.repositories.base import Repository
 from app.repositories.records import ApplicationRecord, StatusEventRecord
 from app.services.clock import now, touch
 from app.services.status_rules import check_transition, dates_after_change
+from app.telemetry import count_status_change, status_change_span
 
 # What PATCH may change. `status` is not here: it changes only through the status endpoint (FR-3).
 EDITABLE_FIELDS = frozenset({"company", "role", "link", "source", "applied_date", "follow_up_date", "notes"})
@@ -86,9 +87,13 @@ def delete_application(repo: Repository, application_id: UUID) -> None:
 def change_status(
     repo: Repository, application_id: UUID, new_status: Status, note: str | None, today: date
 ) -> ApplicationRecord:
-    """Moves to `new_status`, applies the date rules and writes the event, in one transaction."""
-    with repo.transaction():
+    """Moves to `new_status`, applies the date rules and writes the event, in one transaction.
+
+    Traced as the `change_status` span; counted once the transaction has committed (#29).
+    """
+    with status_change_span(application_id) as span, repo.transaction():
         application = get_application(repo, application_id)
+        span.set_attributes({"app.status.from": application.status.value, "app.status.to": new_status.value})
         check_transition(application.status, new_status)
         applied_date, follow_up_date = dates_after_change(
             new_status, application.applied_date, application.follow_up_date, today
@@ -112,6 +117,7 @@ def change_status(
                 created_at=updated_at,
             )
         )
+    count_status_change(application.status.value, new_status.value)
     return updated
 
 
