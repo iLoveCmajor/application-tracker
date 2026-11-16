@@ -54,9 +54,10 @@ git commit --quiet -m "Responder fix for alert #$issue" -m "$(jq -L "$here" -r '
 git push --force "$remote" "HEAD:refs/heads/$branch"
 
 tests="$(jq -r '.tests[] | "- `\(.command)`: \(if .passed then "passed" else "failed" end)"' "$out/verdict.json")"
-files="$(jq -r '.changed[] | "- `\(.)`"' "$out/verdict.json")"
+# Paths come from the model's change, so they go through safe_path (safe.jq) before they are shown (#53).
+files="$(jq -L "$here" -r 'include "safe"; .changed[] | "- `\(. | safe_path)`"' "$out/verdict.json")"
 # A test file is anything under backend/tests/ or a frontend .test.ts / .test.tsx (#37).
-test_files="$(jq -r '.changed[] | select(test("^backend/tests/|^frontend/src/.*\\.test\\.tsx?$")) | "`\(.)`"' "$out/verdict.json" | paste -sd, - | sed 's/,/, /g')"
+test_files="$(jq -L "$here" -r 'include "safe"; .changed[] | select(test("^backend/tests/|^frontend/src/.*\\.test\\.tsx?$")) | "`\(. | safe_path)`"' "$out/verdict.json" | paste -sd, - | sed 's/,/, /g')"
 body_file="$(mktemp)"
 trap 'rm -f "$body_file"' EXIT
 # Text from the model goes in with @ defused, so it can't mention anyone.
