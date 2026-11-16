@@ -139,6 +139,13 @@ PR #14 is a deliberately broken test that shows CI going red.
 
 ## Observability and alerting
 
+**What production exports: nothing.** The deployed app on Render runs with OpenTelemetry off:
+[`render.yaml`](render.yaml) sets no `OTEL_EXPORTER_OTLP_ENDPOINT`, and no hosted telemetry backend
+is connected. In production you get the JSON logs in Render's log view, `/health` and `/ready`, and the
+hourly Smoke check. The metric → trace → log view with `trace_id` (Grafana, Tempo, Loki, Prometheus)
+exists only in the local Compose stack ([below](#following-a-request-across-metrics-traces-and-logs)).
+Sending telemetry from Render to a hosted backend is not done.
+
 - **Logs.** One JSON object per line on stdout, viewable in Render's log view: timestamp, level,
   message, request id, method, path, status, duration. The request id comes from `X-Request-ID` or is
   generated, and is returned in that header, so a user's report can be matched to its log line.
@@ -249,6 +256,27 @@ The scripts are in [`scripts/responder/`](scripts/responder).
 - **Without the API key** the run ends green with a notice naming `ANTHROPIC_API_KEY`, and posts
   nothing.
 
+**Demo evidence.** Both demos below were started by hand by the repository owner; nothing was
+triggered by a real outage. They ran on 16 Nov 2026 (the numbers are links):
+
+- **Not a code problem.** The owner ran Smoke against an address that does not resolve
+  ([Smoke run 43928708801](https://github.com/iLoveCmajor/application-tracker/actions/runs/43928708801),
+  failed as intended). It opened alert [#40](https://github.com/iLoveCmajor/application-tracker/issues/40),
+  and Smoke started
+  [responder run 43929465346](https://github.com/iLoveCmajor/application-tracker/actions/runs/43929465346).
+  The responder commented that the app does not answer and a human needs to act; its `pr` job was
+  skipped, so no pull request.
+- **A code fault.** The owner removed a guard in `screen_rate` on the branch `demo/responder-fault`,
+  opened alert [#41](https://github.com/iLoveCmajor/application-tracker/issues/41) and started
+  [responder run 43929793499](https://github.com/iLoveCmajor/application-tracker/actions/runs/43929793499)
+  by hand. The responder named the removed guard as the cause and opened
+  [PR #42](https://github.com/iLoveCmajor/application-tracker/pull/42) into the demo branch, listing
+  the tests it ran (ruff, backend unit and API tests: passed). CI did not start on that pull request
+  (the comment says so), and the owner closed it without merging.
+
+These runs show the flow on two staged cases. They do not show the responder handling a real
+production alert.
+
 `make test-scripts` tests all of this locally with a fake `gh` and a stub in place of the model;
 `make lint-scripts` runs shellcheck and actionlint (Docker).
 
@@ -263,7 +291,7 @@ Owner setup (once):
    `gh api -X PUT repos/iLoveCmajor/application-tracker/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true`.
    Without it the `pr` job fails and the comment says the pull request couldn't be opened.
 
-Demos (after the setup):
+Demos (after the setup; the runs above came from these steps):
 
 - **Not a code problem.** With no `alert` issue open, run
   `gh workflow run smoke.yml -f url=https://application-tracker-demo-unreachable.invalid`. After
@@ -351,6 +379,13 @@ push to main -> tests (5 jobs) -> deploy-dev (automatic) -> approval -> deploy-p
   run before approving. What GitHub does with an older run still waiting for approval when a newer
   one arrives is not confirmed in its docs; it was not tested yet and gets checked with two pushes
   after the owner setup (AC-28.7).
+- Live run: CI run
+  [43924822675](https://github.com/iLoveCmajor/application-tracker/actions/runs/43924822675) (the push of
+  #28 to `main`, `f302534`): the five test jobs passed; `deploy-dev` ended green but **deployed
+  nothing**, because the dev secret and variable were not set yet (its notice says so); the run then
+  waited on the `production` environment, the owner approved it, and `deploy-prod` succeeded with
+  `/health` reporting `f302534`. So the approval gate and the prod deploy are shown in that run; a dev
+  deploy that reaches a dev service is not.
 - Rollback ([below](#rollback)) and Smoke target prod only (`APP_URL`, `RENDER_DEPLOY_HOOK_URL`); they
   never read the dev settings.
 
@@ -392,6 +427,12 @@ the prod approval does not undo a migration. Write migrations that the old code 
 
 ### Rollback
 
+Live proof: two runs on production, both started by hand with `workflow_dispatch` on 16 Nov 2026.
+[Run 43828550527](https://github.com/iLoveCmajor/application-tracker/actions/runs/43828550527) went
+back one commit (`sha` empty): `/health` reported `ab859c5` before and `b67c294` after, and the job
+succeeded. [Run 43829365640](https://github.com/iLoveCmajor/application-tracker/actions/runs/43829365640)
+went forward again to `ab859c5` and its job succeeded too.
+
 Use it when a deploy broke production (the Smoke workflow opened an `alert` issue, or the app
 misbehaves) and the fix will take longer than going back. [`rollback.yml`](.github/workflows/rollback.yml)
 deploys an earlier commit of `main` through the same deploy hook and waits until `/health` reports it,
@@ -411,6 +452,17 @@ Missing `RENDER_DEPLOY_HOOK_URL` or `APP_URL` fails the run with an error (it do
 CI job). A rollback **does not undo database migrations**: the older code runs against the newer
 schema. That works when migrations only add things (new tables, nullable columns); if the bad deploy
 dropped or renamed something the old code needs, fix forward instead.
+
+## Known follow-ups
+
+Two issues are open and known, not hidden:
+
+- [#33](https://github.com/iLoveCmajor/application-tracker/issues/33): on a database constraint
+  violation PostgreSQL's own `DETAIL` text can carry application fields into the error log line.
+  Not reachable through the API today (validation rejects the input first), so the risk is low.
+- [#37](https://github.com/iLoveCmajor/application-tracker/issues/37): the responder's pull request
+  should flag changed test files for the reviewer, and its `Read` deny rules were never checked
+  against the live CLI.
 
 ## How it was built
 
