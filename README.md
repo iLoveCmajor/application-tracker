@@ -53,7 +53,18 @@ docker compose up --build
 
 Then open <http://localhost:8080>. Compose starts PostgreSQL 16 and the app, runs the migrations, and
 seeds about ten invented applications so there is something to look at. `docker compose down` keeps
-the data; `docker compose down -v` deletes it. If port 8080 is taken, `APP_PORT=8081 docker compose up`.
+the data; `docker compose down -v` deletes it.
+
+Compose publishes two host ports, and `docker compose up` fails if either is already taken:
+
+| Variable | Default | What | If it is taken |
+| --- | --- | --- | --- |
+| `APP_PORT` | 8080 | the app | `APP_PORT=8090 docker compose up`, then open <http://localhost:8090> |
+| `POSTGRES_PORT` | 5432 | PostgreSQL, on 127.0.0.1 only (for `psql` and `make test-integration`) | `POSTGRES_PORT=5433 docker compose up`; the app is still on <http://localhost:8080> |
+
+A local PostgreSQL or another Compose stack usually holds 5432. Both can be set at once
+(`APP_PORT=8090 POSTGRES_PORT=5433 docker compose up`), or in a `.env` file (see
+[`.env.example`](.env.example)).
 
 For development (needs [uv](https://docs.astral.sh/uv/) and Node.js 22):
 
@@ -138,14 +149,17 @@ Metrics, traces and an on-call agent are out of scope for this project.
 
 ## Deployment
 
-The app runs on [Render](https://render.com): a free web service built from the root `Dockerfile`,
-with a free Render Postgres. [`render.yaml`](render.yaml) describes both. Render's own auto-deploy is
-off; the `deploy` job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) deploys instead. It
-runs only on a push to `main`, only after every other CI job has passed, calls the Render deploy hook
-for that commit, then polls `/health` until `version` equals the pushed SHA (up to 10 minutes).
-Until the secret and the variable below exist, the job skips with a notice and `main` stays green.
+The app is deployed on [Render](https://render.com) at
+<https://application-tracker-kvn5.onrender.com>: a free web service built from the root
+`Dockerfile`, with a free Render Postgres. [`render.yaml`](render.yaml) describes both.
 
-Owner setup, once:
+Deploys go through CI only. Render's own auto-deploy is off; the `deploy` job in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on a push to `main`, only after every
+other CI job has passed, calls the Render deploy hook for that commit, then polls `/health` until
+`version` equals the pushed SHA (up to 10 minutes). If the deploy hook secret or the `APP_URL`
+variable is missing, the job skips with a notice instead of failing.
+
+To re-create the deployment (for example on a new Render account):
 
 1. In the Render dashboard: **New → Blueprint**, connect the `iLoveCmajor/application-tracker`
    repository, branch `main`. Render reads `render.yaml` and creates the `application-tracker` web
@@ -153,12 +167,13 @@ Owner setup, once:
 2. Open the web service → **Settings**. Check that **Auto-Deploy** is **Off** (the Blueprint sets it).
    Copy the **Deploy Hook** URL. It is a secret: don't paste it anywhere else.
 3. In GitHub, **Settings → Secrets and variables → Actions**:
-   - **Secrets** tab → New repository secret `RENDER_DEPLOY_HOOK_URL` = the deploy hook URL.
-   - **Variables** tab → New repository variable `APP_URL` = the service URL, e.g.
+   - **Secrets** tab → repository secret `RENDER_DEPLOY_HOOK_URL` = the deploy hook URL.
+   - **Variables** tab → repository variable `APP_URL` = the service URL, e.g.
      `https://application-tracker-xxxx.onrender.com` (no trailing slash needed).
 4. Re-run the latest CI run on `main` (or push to `main`). The `deploy` job should end with
    "`/health` reports version <sha>".
-5. Replace the **Live app** line at the top of this README with the URL.
+5. If the service URL changed, update the **Live app** link at the top of this README and the one
+   above.
 
 Free tier limits:
 
