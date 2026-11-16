@@ -467,7 +467,8 @@ These are open and known, not hidden:
   creation (see Free tier limits), and this one was created on 2026-11-16, so it expires about
   2026-12-16. Confirm the exact date in the Render dashboard. After that date the live app and the
   Smoke workflow fail until the database is replaced: create a new database from the Blueprint, set
-  `DATABASE_URL` on the service to its connection string, and redeploy.
+  `DATABASE_URL` to its connection string on both services (`application-tracker` and
+  `application-tracker-dev`, which share one database), and redeploy both.
 
 ## How it was built
 
