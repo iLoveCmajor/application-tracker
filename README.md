@@ -85,6 +85,7 @@ API docs (Swagger) are at `/docs` on a running API; the contract is [`openapi.ya
 | Database | PostgreSQL 16 (Compose, production); SQLite for the fast API tests |
 | Frontend | React 19, TypeScript, Vite; no router or UI library |
 | Container | one multi-stage [`Dockerfile`](Dockerfile): Node builds the UI, a slim Python image (non-root) serves the API and the built UI |
+| Observability | JSON logs; OpenTelemetry SDK and FastAPI instrumentation, exported only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; a local Collector, Prometheus, Tempo, Loki and Grafana (Compose profile `observability`) |
 | CI/CD | GitHub Actions ([`ci.yml`](.github/workflows/ci.yml), [`smoke.yml`](.github/workflows/smoke.yml)), Render |
 
 ```text
@@ -105,9 +106,9 @@ browser ──▶ FastAPI ──┬─ /            built React app (static file
 
 | Suite | Where | What it covers | Count |
 | --- | --- | --- | --- |
-| Unit | `backend/tests/unit` | date rules, follow-up rule, funnel maths, config, log format; no database | 137 |
-| API | `backend/tests/api` | every endpoint through FastAPI's TestClient on SQLite, every acceptance criterion by id, the routes against `openapi.yaml` | 246 |
-| Integration | `backend/tests/integration` | migrations up and down on PostgreSQL, the full flow (create → status changes → history → follow-ups → funnel), cascades, UTC timestamps | 9 |
+| Unit | `backend/tests/unit` | date rules, follow-up rule, funnel maths, config, log format, the observability files (Compose profile, Grafana provisioning); no database | 144 |
+| API | `backend/tests/api` | every endpoint through FastAPI's TestClient on SQLite, every acceptance criterion by id, the routes against `openapi.yaml`, telemetry through in-memory OpenTelemetry exporters | 265 |
+| Integration | `backend/tests/integration` | migrations up and down on PostgreSQL, the full flow (create → status changes → history → follow-ups → funnel), cascades, UTC timestamps, hidden SQL parameters | 10 |
 | Frontend | `frontend/src/**/*.test.ts` | the typed API client, routing, formatting and overdue helpers (vitest) | 63 |
 
 The integration tests start a throwaway `postgres:16` with testcontainers, or use `TEST_DATABASE_URL`
@@ -147,8 +148,52 @@ PR #14 is a deliberately broken test that shows CI going red.
   failure it opens a GitHub issue labelled
   [`alert`](https://github.com/iLoveCmajor/application-tracker/issues?q=label%3Aalert), or comments on
   the one already open.
+- **Traces, metrics and logs (OpenTelemetry, local only).** The status-change journey
+  (`POST /api/v1/applications/{id}/status`) is instrumented: every request gets a server span, a status
+  change gets a `change_status` child span (application id, `from` and `to` status), a counter
+  `app_status_changes_total{from, to}` counts committed changes (a 409 or 404 adds nothing), and the
+  HTTP histogram `http_server_request_duration_seconds` measures every route. Each JSON log line then
+  also carries `trace_id` and `span_id`. Telemetry is on only when `OTEL_EXPORTER_OTLP_ENDPOINT` is
+  set ([`.env.example`](.env.example)); without it nothing is set up and nothing is sent, which is how
+  production on Render runs.
 
-Metrics, traces and an on-call agent are out of scope for this project.
+### Following a request across metrics, traces and logs
+
+```sh
+docker compose --profile observability up --build
+```
+
+This starts db and app plus an OpenTelemetry Collector, Prometheus, Tempo, Loki and Grafana
+(config in [`docker/observability/`](docker/observability)); plain `docker compose up` still starts only
+db and app. Under the profile the app finds the collector and sets
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318` itself. It sends all three signals over
+OTLP/HTTP to the collector, which forwards traces to Tempo, metrics to Prometheus (its OTLP receiver,
+with exemplars) and logs to Loki (its OTLP endpoint). The logs in Loki are the same JSON lines the app
+writes to stdout, with `trace_id` and `span_id` also stored as Loki structured metadata.
+
+Open Grafana at <http://localhost:3000> (no login; ports bound to 127.0.0.1, change them with
+`GRAFANA_PORT`, `PROMETHEUS_PORT`, `TEMPO_PORT`, `LOKI_PORT`). The data sources and the
+**Application Tracker: status changes** dashboard are provisioned. Change a status in the app, then:
+
+1. **Metric → trace.** In *Status changes (from → to)*, hover an exemplar dot on the line and click
+   **View trace** (or click a trace id in *Status-change traces*).
+2. **Trace → logs.** The trace has the `POST /api/v1/applications/{id}/status` server span and its
+   `change_status` child. On a span, **Logs for this span** opens the Loki lines with that `trace_id`.
+3. **Log → trace.** In *Status-change request log lines*, expand a line: the `trace_id` field has a
+   **View trace** link back to Tempo.
+
+![Grafana: the status-change dashboard with the counter, the duration histogram, the traces and their log lines](_docs/img/grafana-dashboard.png)
+
+![Grafana Explore: one status-change trace in Tempo next to its log lines in Loki, matched by trace_id](_docs/img/grafana-trace-logs.png)
+
+No application fields or credentials reach any signal. The app exports only allowlisted span
+attributes (method, route, status code, application id, from/to status), keeps an exception event's
+type but not its message, exports only the two metrics above with only their listed labels, and
+never records request bodies, query strings, client addresses or SQL. The log lines are the #12 lines,
+which carry none of them either. Health checks (`/health`, `/ready`) are not traced.
+Seed data at start-up goes through the same status-change code, so the counter starts above zero.
+
+An on-call agent is out of scope for this project.
 
 ## Deployment
 
@@ -250,6 +295,7 @@ actually happened:
 | `backend/` | FastAPI app, migrations, tests |
 | `frontend/` | React app and its tests |
 | [`Dockerfile`](Dockerfile), [`compose.yaml`](compose.yaml) | image and the local full system |
+| [`docker/observability/`](docker/observability) | Collector, Prometheus, Tempo, Loki and Grafana config for the `observability` profile |
 | [`render.yaml`](render.yaml) | Render Blueprint |
 | `.github/workflows/` | CI/CD and the smoke-check alert |
 | `scripts/` | smoke check, alert, deploy and rollback scripts used by the workflows |
