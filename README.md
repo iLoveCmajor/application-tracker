@@ -114,6 +114,9 @@ when it is set (CI uses a Postgres service container).
    waits until the live `/health` reports the new commit SHA. A failing test means no deploy, and the
    running version stays up.
 
+To go back to an earlier version, run the manual [Rollback](#rollback) workflow
+([`rollback.yml`](.github/workflows/rollback.yml)).
+
 Every change after CI existed went through a pull request with green checks
 ([closed pull requests](https://github.com/iLoveCmajor/application-tracker/pulls?q=is%3Apr+is%3Aclosed)).
 PR #14 is a deliberately broken test that shows CI going red.
@@ -170,6 +173,27 @@ Free tier limits:
 
 `/health` reports the deployed commit from `RENDER_GIT_COMMIT`, which Render sets on every deploy.
 
+### Rollback
+
+Use it when a deploy broke production (the Smoke workflow opened an `alert` issue, or the app
+misbehaves) and the fix will take longer than going back. [`rollback.yml`](.github/workflows/rollback.yml)
+deploys an earlier commit of `main` through the same deploy hook and waits until `/health` reports it,
+like the CI `deploy` job (both use [`scripts/render-deploy.sh`](scripts/render-deploy.sh)). It shares
+the `deploy-render` concurrency group with that job, so a rollback and a deploy never run at once.
+
+- **Back one commit:** Actions → **Rollback** → **Run workflow**, leave `sha` empty. It reads the live
+  commit from `/health` and deploys its parent; the log names both SHAs. From the terminal:
+  `gh workflow run Rollback`.
+- **To a chosen commit:** fill in `sha` (full or short), or `gh workflow run Rollback -f sha=<sha>`.
+  The SHA must be a commit on `main`; anything else fails the run before Render is called.
+- **Forward again:** the next push to `main` deploys `main`'s HEAD as usual, or run Rollback with
+  `main`'s HEAD SHA. Then run Smoke (`gh workflow run Smoke`) to check the app.
+
+Missing `RENDER_DEPLOY_HOOK_URL` or `APP_URL` fails the run with an error (it doesn't skip, unlike the
+CI job). A rollback **does not undo database migrations**: the older code runs against the newer
+schema. That works when migrations only add things (new tables, nullable columns); if the bad deploy
+dropped or renamed something the old code needs, fix forward instead.
+
 ## How it was built
 
 Built with AI coding agents (Claude Code) following the course's PM → Engineer → QA process. What
@@ -213,4 +237,4 @@ actually happened:
 | [`Dockerfile`](Dockerfile), [`compose.yaml`](compose.yaml) | image and the local full system |
 | [`render.yaml`](render.yaml) | Render Blueprint |
 | `.github/workflows/` | CI/CD and the smoke-check alert |
-| `scripts/` | smoke check and alert scripts used by the workflow |
+| `scripts/` | smoke check, alert, deploy and rollback scripts used by the workflows |

@@ -1,0 +1,57 @@
+# Manual rollback (#27): deploy an earlier commit of main to Render and wait until /health reports
+# it. With no input it deploys the parent of the commit that is live now. The next push to main
+# deploys forward again. It does not undo database migrations (README, Deployment).
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit SHA on main to deploy (full or short). Empty deploys the parent of the live commit.
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: rollback (Render)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Same group as the CI deploy job, so a rollback and a deploy never run at once.
+    concurrency:
+      group: deploy-render
+      cancel-in-progress: false
+    env:
+      # The production settings from #11; never written into the repo.
+      DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      APP_URL: ${{ vars.APP_URL }}
+    steps:
+      # A manual rollback that silently skipped would mislead, so missing settings fail the run.
+      - name: check deploy settings
+        run: |
+          missing=""
+          if [ -z "$DEPLOY_HOOK_URL" ]; then missing="the RENDER_DEPLOY_HOOK_URL secret"; fi
+          if [ -z "$APP_URL" ]; then missing="${missing:+$missing and }the APP_URL variable"; fi
+          if [ -n "$missing" ]; then
+            echo "::error title=Rollback not configured::Missing $missing (README, Deployment). Nothing was deployed."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: pick the target commit
+        id: target
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          target=$(scripts/rollback-target.sh "$INPUT_SHA")
+          echo "sha=$target" >> "$GITHUB_OUTPUT"
+
+      - name: deploy the target and wait for /health
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: scripts/render-deploy.sh "$TARGET_SHA"

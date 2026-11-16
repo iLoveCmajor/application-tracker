@@ -129,35 +129,11 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: trigger the Render deploy hook
+      - uses: actions/checkout@v7
         if: steps.settings.outputs.configured == 'true'
-        run: |
-          # The hook URL already carries ?key=...; ref pins the deploy to this commit.
-          case "$DEPLOY_HOOK_URL" in *\?*) sep='&' ;; *) sep='?' ;; esac
-          code=$(curl -sS -X POST -o response.json -w '%{http_code}' \
-            "${DEPLOY_HOOK_URL}${sep}ref=${GITHUB_SHA}")
-          echo "Render answered HTTP $code: $(cat response.json)"
-          case "$code" in
-            200|202) ;;
-            *) echo "::error::The deploy hook returned HTTP $code"; exit 1 ;;
-          esac
 
-      - name: wait until /health reports this commit
+      # Calls the hook with ref=<this commit>, then polls /health until it reports this commit
+      # (up to 10 minutes). The Rollback workflow (#27) uses the same script.
+      - name: deploy this commit and wait for /health
         if: steps.settings.outputs.configured == 'true'
-        run: |
-          # Free instances sleep, and a Docker build takes a few minutes: poll for up to 10 minutes.
-          url="${APP_URL%/}/health"
-          deadline=$(( $(date +%s) + 600 ))
-          while :; do
-            version=$(curl -sS --max-time 60 "$url" | jq -r '.version // empty' 2>/dev/null || true)
-            if [ "$version" = "$GITHUB_SHA" ]; then
-              echo "$url reports version $version"
-              exit 0
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::$url still reports version '${version:-unreachable}', expected $GITHUB_SHA after 10 minutes"
-              exit 1
-            fi
-            echo "version '${version:-unreachable}', waiting for $GITHUB_SHA"
-            sleep 15
-          done
+        run: scripts/render-deploy.sh "$GITHUB_SHA"
